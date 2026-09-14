@@ -123,6 +123,127 @@ func TestColumnOverrideEmail(t *testing.T) {
 	}
 }
 
+func usersSnap(cols ...catalog.Column) *catalog.Snapshot {
+	return &catalog.Snapshot{
+		Relations: []catalog.Relation{{
+			Schema:  "public",
+			Name:    "users",
+			Columns: cols,
+		}},
+	}
+}
+
+func TestOmitGlobAndPerMessage(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Fields.Omit = []string{"password", "*_hash"}
+	cfg.Messages["public.users"] = config.MessageSpec{Omit: []string{"internal_notes"}}
+	snap := usersSnap(
+		catalog.Column{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true},
+		catalog.Column{Name: "password", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: true},
+		catalog.Column{Name: "password_hash", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: true},
+		catalog.Column{Name: "internal_notes", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: false},
+		catalog.Column{Name: "email", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: true},
+	)
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]mapping.Field{}
+	for _, f := range got.Relations[0].Fields {
+		byName[f.Column] = f
+	}
+	if _, ok := byName["id"]; !ok {
+		t.Fatal("id should remain")
+	}
+	if _, ok := byName["email"]; !ok {
+		t.Fatal("email should remain")
+	}
+	for _, gone := range []string{"password", "password_hash", "internal_notes"} {
+		if _, ok := byName[gone]; ok {
+			t.Fatalf("%s should be omitted", gone)
+		}
+	}
+}
+
+func TestExtraMixinAndPerMessage(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Fields.Extra = []config.ExtraField{{
+		Name:      "etag",
+		ProtoType: "string",
+		Optional:  true,
+	}}
+	cfg.Messages["public.users"] = config.MessageSpec{
+		Extra: []config.ExtraField{{
+			Name:      "display_name",
+			ProtoType: "string",
+			Optional:  true,
+			Validate:  config.Validate{MaxLen: intPtr(255)},
+		}, {
+			Name:      "meta",
+			ProtoType: "google.protobuf.Struct",
+			Optional:  true,
+		}},
+	}
+	snap := usersSnap(
+		catalog.Column{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true},
+	)
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]mapping.Field{}
+	for _, f := range got.Relations[0].Fields {
+		byName[f.Column] = f
+	}
+	assertField(t, byName["etag"], "string", false, true, nil)
+	if !byName["etag"].Extra {
+		t.Fatal("etag should be extra")
+	}
+	assertField(t, byName["display_name"], "string", false, true, nil)
+	if !contains(byName["display_name"].Validate, "(buf.validate.field).string.max_len = 255") {
+		t.Fatalf("display_name validate: %v", byName["display_name"].Validate)
+	}
+	assertField(t, byName["meta"], "google.protobuf.Struct", false, true, nil)
+	if !contains(byName["meta"].Imports, "google/protobuf/struct.proto") {
+		t.Fatalf("meta imports: %v", byName["meta"].Imports)
+	}
+}
+
+func TestExtraCollision(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Fields.Extra = []config.ExtraField{{Name: "id", ProtoType: "string"}}
+	snap := usersSnap(
+		catalog.Column{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true},
+	)
+	if _, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil); err == nil {
+		t.Fatal("expected collision")
+	}
+}
+
+func TestExtraRequiresImport(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Fields.Extra = []config.ExtraField{{Name: "addr", ProtoType: "geo.Address"}}
+	snap := usersSnap(
+		catalog.Column{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true},
+	)
+	if _, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil); err == nil {
+		t.Fatal("expected import error")
+	}
+}
+
+func TestExtraOptionalAndRepeatedRejected(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Fields.Extra = []config.ExtraField{{Name: "tags", ProtoType: "string", Optional: true, Repeated: true}}
+	snap := usersSnap(
+		catalog.Column{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true},
+	)
+	if _, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil); err == nil {
+		t.Fatal("expected optional+repeated error")
+	}
+}
+
+func intPtr(n int) *int { return &n }
+
 func assertField(t *testing.T, f mapping.Field, proto string, repeated, optional bool, _ []string) {
 	t.Helper()
 	if f.ProtoType != proto || f.Repeated != repeated || f.Optional != optional {

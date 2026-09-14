@@ -311,18 +311,21 @@ enums:
     # UNSPECIFIED=0 は合成値。lock の values には PG ラベルだけを置く
 ```
 
-### 4.2 型・カラム override（カスタムはこれだけ）
+### 4.2 型 override・omit・extra
 
-機械的写像だけでは「この `jsonb` だけ Struct」「この列だけ email」に応えられない。`.pg2proto.yaml` で **型名または `schema.relation.column` の差し替え**を許す。
+機械的写像だけでは「この列だけ email」「password を出さない」「全 message に etag を足す」に応えられない。`.pg2proto.yaml` で次を許す。
 
-できること: `proto_type` / `import` / validate（protovalidate と 1:1）。
+- **型・カラム override**: `proto_type` / `import` / validate（protovalidate と 1:1）
+- **omit**: カタログ列を生成しない。glob は `column` / `relation.column` / `schema.relation.column`
+- **extra**: カタログに無いフィールドを足す。`fields.extra` は全 message、`messages.<schema.relation>.extra` は当該 message。番号は lock が振る
 
 できないこと:
 
-- 生成 message への共通フィールド差し込み（mixin）
 - Go `text/template` による `.proto` 全体上書き
+- extra で `number` を指定すること
+- extra 名と残っているカタログ列名の衝突（型差し替えは override）
 
-message の骨格・番号・列集合のオーナーは常にカタログ + lock。共通メタが必要なら、生成 message を包む手書き wrap を使う。
+番号・reserved のオーナーは常に lock。omit で消えた列は reserved。extra の追加は新番号で、omit と同時でも未宣言リネームにはしない。
 
 override の制約:
 
@@ -330,9 +333,9 @@ override の制約:
 - lock は `proto_type` 文字列を持つ。カスタム message **内部**の番号変更は `check` の対象外
 - override で proto 型が変わること自体は非互換。`check` は fail
 - カスタム型に `string.uuid` は付けない。CEL はカスタム側フィールド名に依存し、生成器は型チェックしない
-- NULL / 配列の出し方（`optional` / `repeated` / 素のフィールド）は元カラムに従う
+- カタログ列の NULL / 配列の出し方（`optional` / `repeated` / 素のフィールド）は元カラムに従う。extra は YAML の `optional` / `repeated` に従う
 
-優先順位: **カラム override > 型 override > グローバル options > 既定マップ**。
+優先順位: **カラム override > 型 override > グローバル options > 既定マップ**。omit は写像後に列を落とす。extra は omit 後に足す。
 
 ### 4.3 buf との境界
 
@@ -359,6 +362,21 @@ options:
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
   exclude: ["_*"]         # glob（schema.relation または relation）
+
+fields:
+  omit: ["password", "*_hash"]
+  extra:
+    - name: etag
+      proto_type: string
+      optional: true
+
+messages:
+  "public.users":
+    omit: ["internal_notes"]
+    extra:
+      - name: display_name
+        proto_type: string
+        optional: true
 
 renames:
   columns:

@@ -100,6 +100,23 @@ tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
   exclude: ["_*"]         # glob。schema.relation または relation にマッチ
 
+fields:
+  omit: ["password", "*_hash"]   # glob。column / relation.column / schema.relation.column
+  extra:                         # 全 message に足す
+    - name: etag
+      proto_type: string
+      optional: true
+
+messages:
+  "public.users":
+    omit: ["internal_notes"]
+    extra:
+      - name: display_name
+        proto_type: string
+        optional: true
+        validate:
+          max_len: 255
+
 renames:
   columns:
     "public.users.old_email": "email"
@@ -133,6 +150,9 @@ overrides:
 | `options.validate` | uuid / varchar `max_len` / date pattern などの自動アノテーション |
 | `options.strict_types` | 未知型をエラーにする。`false` なら `google.protobuf.Any` |
 | `tables.include` / `exclude` | 対象 relation の glob。include が空なら全件 |
+| `fields.omit` | 生成しない列の glob（`column` / `relation.column` / `schema.relation.column`） |
+| `fields.extra` | 全 message に足すフィールド。番号は lock が振る |
+| `messages` | `schema.relation` 単位の omit / extra。グローバルに加算 |
 | `renames` | カラム / enum ラベルの改名。無いと drop+add 扱いで `check` が失敗することがある |
 | `overrides.types` | PG 型名ごとの proto 型・import・validate |
 | `overrides.columns` | `schema.relation.column` 単位。型 override より優先 |
@@ -147,7 +167,11 @@ validate の yaml キーと生成物の対応:
 | `pattern: "..."` | `(buf.validate.field).string.pattern` |
 | `cel: "..."` | `(buf.validate.field).cel` |
 
-カスタムは型・カラムの差し替えだけです。生成 message へのフィールド差し込みや、テンプレ全体の上書きはできません。
+extra のキー: `name`（lock のキー兼 proto 名）、`proto_type`、`optional` / `repeated`（排他）、`import`、`validate`、`comment`。番号は YAML に書かない。`google.protobuf.*` は import 省略可。それ以外のカスタム型は `import` 必須。カタログ列と同名の extra はエラー（型の差し替えは `overrides.columns`）。
+
+omit した列の番号は lock の `reserved` に残る。omit と extra を同時にしても未宣言リネームにはしない。
+
+テンプレ全体の上書きはできません。
 
 ## 注意
 

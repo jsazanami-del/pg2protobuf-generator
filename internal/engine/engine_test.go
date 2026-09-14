@@ -31,6 +31,7 @@ func fixture() *catalog.Snapshot {
 				{Name: "tags", TypeOID: pgtype.TextArrayOID, TypeName: "_text", TypeType: 'a', ElemOID: pgtype.TextOID, ElemName: "text"},
 				{Name: "nickname", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: false},
 				{Name: "status", TypeOID: 99901, TypeName: "order_status", TypeType: 'e', TypeSchema: "public", NotNull: true},
+				{Name: "password", TypeOID: pgtype.TextOID, TypeName: "text", NotNull: true},
 			},
 		}},
 	}
@@ -46,6 +47,18 @@ proto:
 options:
   jsonb_as_struct: false
   validate: true
+fields:
+  omit: ["password"]
+  extra:
+    - name: etag
+      proto_type: string
+      optional: true
+messages:
+  public.users:
+    extra:
+      - name: display_name
+        proto_type: string
+        optional: true
 overrides:
   columns:
     "public.users.email":
@@ -85,6 +98,15 @@ overrides:
 	}
 	if !strings.Contains(users, "(buf.validate.field).string.email = true") {
 		t.Fatalf("email:\n%s", users)
+	}
+	if strings.Contains(users, "password") {
+		t.Fatalf("password should be omitted:\n%s", users)
+	}
+	if !strings.Contains(users, "optional string etag") {
+		t.Fatalf("etag:\n%s", users)
+	}
+	if !strings.Contains(users, "optional string display_name") {
+		t.Fatalf("display_name:\n%s", users)
 	}
 	if strings.Contains(users, "gt = 0") {
 		t.Fatal("must not auto-add gt=0")

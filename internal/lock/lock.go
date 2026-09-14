@@ -267,16 +267,18 @@ func assignMessage(old *Message, rel mapping.Relation) (*Message, []string) {
 		currentCols[f.Column] = f
 	}
 
-	dropped := 0
-	added := 0
+	catalogDropped := 0
+	catalogAdded := 0
 	if old != nil {
 		for col, of := range old.Fields {
 			used[of.Number] = true
 			if _, ok := currentCols[col]; !ok {
-				dropped++
 				msg.ReservedNumbers = append(msg.ReservedNumbers, of.Number)
 				msg.ReservedNames = append(msg.ReservedNames, col)
 				used[of.Number] = true
+				if of.PGType != "extra" {
+					catalogDropped++
+				}
 			}
 		}
 	}
@@ -293,14 +295,16 @@ func assignMessage(old *Message, rel mapping.Relation) (*Message, []string) {
 				continue
 			}
 		}
-		added++
+		if !f.Extra {
+			catalogAdded++
+		}
 		n := nextNumber(used)
 		used[n] = true
 		entry.Number = n
 		msg.Fields[f.Column] = entry
 	}
 
-	if dropped > 0 && added > 0 {
+	if catalogDropped > 0 && catalogAdded > 0 {
 		reasons = append(reasons, fmt.Sprintf("%s: columns removed and added without a rename declaration", rel.Key()))
 	}
 	msg.ReservedNumbers = uniqInts(msg.ReservedNumbers)

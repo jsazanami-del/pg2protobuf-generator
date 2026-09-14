@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	pathpkg "path"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -12,12 +13,14 @@ const Version = "1"
 
 // Config is .pg2proto.yaml.
 type Config struct {
-	Version   string    `yaml:"version"`
-	Proto     Proto     `yaml:"proto"`
-	Options   Options   `yaml:"options"`
-	Tables    Tables    `yaml:"tables"`
-	Renames   Renames   `yaml:"renames"`
-	Overrides Overrides `yaml:"overrides"`
+	Version   string                 `yaml:"version"`
+	Proto     Proto                  `yaml:"proto"`
+	Options   Options                `yaml:"options"`
+	Tables    Tables                 `yaml:"tables"`
+	Fields    Fields                 `yaml:"fields"`
+	Messages  map[string]MessageSpec `yaml:"messages"`
+	Renames   Renames                `yaml:"renames"`
+	Overrides Overrides              `yaml:"overrides"`
 }
 
 type Proto struct {
@@ -34,6 +37,26 @@ type Options struct {
 type Tables struct {
 	Include []string `yaml:"include"`
 	Exclude []string `yaml:"exclude"`
+}
+
+type Fields struct {
+	Omit  []string     `yaml:"omit"`
+	Extra []ExtraField `yaml:"extra"`
+}
+
+type MessageSpec struct {
+	Omit  []string     `yaml:"omit"`
+	Extra []ExtraField `yaml:"extra"`
+}
+
+type ExtraField struct {
+	Name      string   `yaml:"name"`
+	ProtoType string   `yaml:"proto_type"`
+	Optional  bool     `yaml:"optional"`
+	Repeated  bool     `yaml:"repeated"`
+	Import    string   `yaml:"import"`
+	Validate  Validate `yaml:"validate"`
+	Comment   string   `yaml:"comment"`
 }
 
 type Renames struct {
@@ -69,6 +92,7 @@ func Defaults() *Config {
 		Options: Options{
 			Validate: true,
 		},
+		Messages: map[string]MessageSpec{},
 		Renames: Renames{
 			Columns:    map[string]string{},
 			EnumValues: map[string]string{},
@@ -107,7 +131,42 @@ func Load(path string) (*Config, error) {
 	if cfg.Overrides.Columns == nil {
 		cfg.Overrides.Columns = map[string]Override{}
 	}
+	if cfg.Messages == nil {
+		cfg.Messages = map[string]MessageSpec{}
+	}
 	return cfg, nil
+}
+
+// MatchGlob reports whether any name matches any path.Match pattern.
+func MatchGlob(patterns []string, names ...string) bool {
+	for _, p := range patterns {
+		if p == "" {
+			continue
+		}
+		for _, n := range names {
+			ok, err := pathpkg.Match(p, n)
+			if err == nil && ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OmitsColumn reports whether a catalog column is excluded from generated messages.
+func (c *Config) OmitsColumn(schema, relation, column string) bool {
+	names := []string{
+		column,
+		relation + "." + column,
+		schema + "." + relation + "." + column,
+	}
+	if MatchGlob(c.Fields.Omit, names...) {
+		return true
+	}
+	if msg, ok := c.Messages[schema+"."+relation]; ok {
+		return MatchGlob(msg.Omit, names...)
+	}
+	return false
 }
 
 func (c *Config) MergeFlags(exclude []string, strictTypes *bool) {
@@ -135,6 +194,12 @@ options:
 tables:
   include: []
   exclude: ["_*"]
+
+fields:
+  omit: []    # glob。column / relation.column / schema.relation.column
+  extra: []   # 全 message に足す mixin
+
+messages: {}  # "schema.relation": {omit, extra}
 
 renames:
   columns: {}
