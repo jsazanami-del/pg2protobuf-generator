@@ -1,0 +1,17 @@
+{{- if .Comment -}}
+// {{.Comment}}
+{{end -}}
+message {{.Name}} {
+{{- range .Fields}}
+{{- if .Comment}}
+  // {{.Comment}}
+{{- end}}
+  {{if .Label}}{{.Label}} {{end}}{{.Type}} {{.Name}} = {{.Number}}{{if .Options}} [{{join .Options ", "}}]{{end}};
+{{- end}}
+{{- if .ReservedNumbers}}
+  reserved {{range $i, $n := .ReservedNumbers}}{{if $i}}, {{end}}{{$n}}{{end}};
+{{- end}}
+{{- if .ReservedNames}}
+  reserved {{range $i, $n := .ReservedNames}}{{if $i}}, {{end}}"{{$n}}"{{end}};
+{{- end}}
+}

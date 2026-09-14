@@ -64,6 +64,7 @@ pg2proto [subcommand] [flags]
 | `--force` | | `false` | 非互換があっても lock を更新する（`reserved` は維持する） |
 | `--prune` | | `false` | DB から消えた relation / enum の生成ファイルを削除する。無い場合は stale を残し、`check` は fail |
 | `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算） |
+| `--strict-types` | | `false` | 未知型・composite / `record` でエラーにする。既定は `google.protobuf.Any`（yaml `options.strict_types` より優先） |
 
 非互換な変更があるとき、`--force` 無しの `generate` は終了コード `1` で失敗し、ファイルを更新しない。
 
@@ -157,7 +158,7 @@ view / matview:
 
 ### 3.3 二段目: OID → proto
 
-キーは typname 文字列ではなく **`pgtype.*OID`（剥がしたあと）**。未知 OID かつ `LoadType` 失敗は **エラー**（黙って `string` にしない）。composite / `RecordOID` もエラー。override で型名を差し替えれば救済できる。
+キーは typname 文字列ではなく **`pgtype.*OID`（剥がしたあと）**。未知 OID かつ `LoadType` 失敗、および composite / `RecordOID` は、既定で `google.protobuf.Any`（`google/protobuf/any.proto`）に落とす。`--strict-types` または `options.strict_types: true` のときはエラー。override で型名を差し替えることもできる。黙って `string` にはしない。
 
 | PostgreSQL（pgx OID） | Protobuf | 自動 validate | 備考 |
 | :--- | :--- | :--- | :--- |
@@ -181,7 +182,7 @@ view / matview:
 | range / multirange | `string` | - | override で専用 message 可 |
 | 配列 / `ArrayCodec` | `repeated T` | 要素に準拠 | PG の NULL 配列と `[]` は区別しない |
 | ENUM | proto `enum` | - | §3.6 |
-| composite / `RecordOID` | （エラー） | - | override 必須 |
+| composite / `RecordOID` | `google.protobuf.Any` | - | `--strict-types` ではエラー |
 
 `int64_as_string` オプションは **設けない**。Proto3 JSON は既に int64 を string 化する。proto のワイヤ型まで string にすると gRPC binary 互換が壊れる。
 
@@ -353,6 +354,7 @@ proto:
 options:
   jsonb_as_struct: false  # true なら json/jsonb を google.protobuf.Struct
   validate: true          # false なら自動アノテーションも import も出さない
+  strict_types: false     # true なら未知型・composite でエラー（既定は google.protobuf.Any）
 
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
