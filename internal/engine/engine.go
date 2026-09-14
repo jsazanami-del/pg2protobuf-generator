@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -199,18 +198,7 @@ func match(schema, name string, include, exclude []string) bool {
 }
 
 func anyGlob(patterns []string, names ...string) bool {
-	for _, p := range patterns {
-		if p == "" {
-			continue
-		}
-		for _, n := range names {
-			ok, err := path.Match(p, n)
-			if err == nil && ok {
-				return true
-			}
-		}
-	}
-	return false
+	return config.MatchGlob(patterns, names...)
 }
 
 func sortedKeys(m map[string]string) []string {

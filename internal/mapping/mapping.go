@@ -40,6 +40,7 @@ type Field struct {
 	Imports   []string
 	Validate  []string
 	Custom    bool // override replaced the proto type
+	Extra     bool // yaml extra field, not a catalog column
 }
 
 type Enum struct {
@@ -101,12 +102,20 @@ func Apply(snap *catalog.Snapshot, cfg *config.Config, resolver TypeResolver, lo
 			Comment:   rel.Comment,
 		}
 		for _, col := range rel.Columns {
+			if cfg.OmitsColumn(rel.Schema, rel.Name, col.Name) {
+				continue
+			}
 			f, err := mapColumn(col, rel, cfg, resolver, loader, enumByOID, enumByName)
 			if err != nil {
 				return nil, fmt.Errorf("%s.%s.%s: %w", rel.Schema, rel.Name, col.Name, err)
 			}
 			mr.Fields = append(mr.Fields, f)
 		}
+		extras, err := extraFields(rel, cfg, mr.Fields)
+		if err != nil {
+			return nil, err
+		}
+		mr.Fields = append(mr.Fields, extras...)
 		out.Relations = append(out.Relations, mr)
 	}
 	return out, nil
@@ -173,6 +182,115 @@ func mapColumn(
 	}
 	f.Imports = uniq(f.Imports)
 	return f, nil
+}
+
+func extraFields(rel catalog.Relation, cfg *config.Config, existing []Field) ([]Field, error) {
+	var specs []config.ExtraField
+	specs = append(specs, cfg.Fields.Extra...)
+	if msg, ok := cfg.Messages[rel.Schema+"."+rel.Name]; ok {
+		specs = append(specs, msg.Extra...)
+	}
+	if len(specs) == 0 {
+		return nil, nil
+	}
+
+	taken := map[string]struct{}{}
+	for _, f := range existing {
+		taken[f.Column] = struct{}{}
+		taken[f.ProtoName] = struct{}{}
+	}
+
+	var out []Field
+	for _, spec := range specs {
+		f, err := mapExtra(rel, cfg, spec, taken)
+		if err != nil {
+			return nil, err
+		}
+		taken[f.Column] = struct{}{}
+		taken[f.ProtoName] = struct{}{}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+func mapExtra(rel catalog.Relation, cfg *config.Config, spec config.ExtraField, taken map[string]struct{}) (Field, error) {
+	if spec.Name == "" {
+		return Field{}, fmt.Errorf("%s: extra field is missing name", rel.Key())
+	}
+	if spec.ProtoType == "" {
+		return Field{}, fmt.Errorf("%s.%s: extra field is missing proto_type", rel.Key(), spec.Name)
+	}
+	if spec.Optional && spec.Repeated {
+		return Field{}, fmt.Errorf("%s.%s: extra field cannot be both optional and repeated", rel.Key(), spec.Name)
+	}
+	protoName := naming.FieldName(spec.Name)
+	if _, ok := taken[spec.Name]; ok {
+		return Field{}, fmt.Errorf("%s.%s: extra field collides with an existing field", rel.Key(), spec.Name)
+	}
+	if protoName != spec.Name {
+		if _, ok := taken[protoName]; ok {
+			return Field{}, fmt.Errorf("%s.%s: extra field proto name %s collides with an existing field", rel.Key(), spec.Name, protoName)
+		}
+	}
+	if !isScalarProto(spec.ProtoType) && spec.Import == "" && wellKnownImport(spec.ProtoType) == "" {
+		return Field{}, fmt.Errorf("%s.%s: extra field type %s requires import", rel.Key(), spec.Name, spec.ProtoType)
+	}
+
+	f := Field{
+		Column:    spec.Name,
+		ProtoName: protoName,
+		ProtoType: spec.ProtoType,
+		PGType:    "extra",
+		Repeated:  spec.Repeated,
+		Optional:  spec.Optional,
+		Comment:   spec.Comment,
+		Custom:    true,
+		Extra:     true,
+	}
+	if spec.Import != "" {
+		f.Imports = append(f.Imports, spec.Import)
+	} else if wkt := wellKnownImport(spec.ProtoType); wkt != "" {
+		f.Imports = append(f.Imports, wkt)
+	}
+	if cfg.Options.Validate {
+		f.Validate = append(f.Validate, validateOpts(spec.Validate)...)
+		rewriteRepeatedValidate(&f)
+	}
+	f.Imports = uniq(f.Imports)
+	return f, nil
+}
+
+func isScalarProto(t string) bool {
+	switch t {
+	case "bool", "int32", "int64", "uint32", "uint64", "sint32", "sint64",
+		"fixed32", "fixed64", "sfixed32", "sfixed64", "float", "double", "string", "bytes":
+		return true
+	default:
+		return false
+	}
+}
+
+func wellKnownImport(protoType string) string {
+	switch protoType {
+	case "google.protobuf.Timestamp":
+		return "google/protobuf/timestamp.proto"
+	case "google.protobuf.Duration":
+		return "google/protobuf/duration.proto"
+	case "google.protobuf.Empty":
+		return "google/protobuf/empty.proto"
+	case "google.protobuf.Any":
+		return "google/protobuf/any.proto"
+	case "google.protobuf.Struct", "google.protobuf.Value", "google.protobuf.ListValue":
+		return "google/protobuf/struct.proto"
+	case "google.protobuf.BoolValue", "google.protobuf.BytesValue", "google.protobuf.DoubleValue",
+		"google.protobuf.FloatValue", "google.protobuf.Int32Value", "google.protobuf.Int64Value",
+		"google.protobuf.StringValue", "google.protobuf.UInt32Value", "google.protobuf.UInt64Value":
+		return "google/protobuf/wrappers.proto"
+	case "google.protobuf.FieldMask":
+		return "google/protobuf/field_mask.proto"
+	default:
+		return ""
+	}
 }
 
 type mappedType struct {
@@ -418,16 +536,7 @@ func varcharLen(typmod int32) int {
 }
 
 func isMessageType(t string) bool {
-	if t == "" {
-		return false
-	}
-	switch t {
-	case "bool", "int32", "int64", "uint32", "uint64", "sint32", "sint64",
-		"fixed32", "fixed64", "sfixed32", "sfixed64", "float", "double", "string", "bytes":
-		return false
-	default:
-		return true
-	}
+	return t != "" && !isScalarProto(t)
 }
 
 func uniq(in []string) []string {

@@ -21,6 +21,50 @@ func TestLoadMissingUsesDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadFieldsAndMessages(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".pg2proto.yaml")
+	body := `version: "1"
+fields:
+  omit: ["password", "*_hash"]
+  extra:
+    - name: etag
+      proto_type: string
+      optional: true
+messages:
+  public.users:
+    omit: ["internal_notes"]
+    extra:
+      - name: display_name
+        proto_type: string
+`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.OmitsColumn("public", "users", "password") {
+		t.Fatal("password should be omitted")
+	}
+	if !cfg.OmitsColumn("public", "users", "password_hash") {
+		t.Fatal("password_hash should be omitted")
+	}
+	if !cfg.OmitsColumn("public", "users", "internal_notes") {
+		t.Fatal("internal_notes should be omitted")
+	}
+	if cfg.OmitsColumn("public", "users", "email") {
+		t.Fatal("email should remain")
+	}
+	if len(cfg.Fields.Extra) != 1 || cfg.Fields.Extra[0].Name != "etag" {
+		t.Fatalf("extra: %+v", cfg.Fields.Extra)
+	}
+	if cfg.Messages["public.users"].Extra[0].Name != "display_name" {
+		t.Fatalf("messages extra: %+v", cfg.Messages["public.users"])
+	}
+}
+
 func TestWriteFileRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".pg2proto.yaml")

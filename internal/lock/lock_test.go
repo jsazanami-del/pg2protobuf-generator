@@ -98,6 +98,39 @@ func TestUndeclaredRenameBreaks(t *testing.T) {
 	}
 }
 
+func TestOmitAndExtraNotUndeclaredRename(t *testing.T) {
+	cfg := config.Defaults()
+	mapped := &mapping.Schema{
+		Relations: []mapping.Relation{{
+			Schema:    "public",
+			Name:      "users",
+			ProtoName: "Users",
+			Fields: []mapping.Field{
+				{Column: "id", ProtoName: "id", ProtoType: "int64", PGType: "int8"},
+				{Column: "password", ProtoName: "password", ProtoType: "string", PGType: "text"},
+			},
+		}},
+	}
+	r1 := lock.Assign(lock.Empty(), mapped, cfg)
+	mapped.Relations[0].Fields = []mapping.Field{
+		{Column: "id", ProtoName: "id", ProtoType: "int64", PGType: "int8"},
+		{Column: "etag", ProtoName: "etag", ProtoType: "string", PGType: "extra", Extra: true, Optional: true},
+	}
+	r2 := lock.Assign(r1.Lock, mapped, cfg)
+	if len(r2.Breaking) != 0 {
+		t.Fatalf("omit+extra should not look like a rename: %v", r2.Breaking)
+	}
+	if r2.Lock.Messages["public.users"].Fields["id"].Number != 1 {
+		t.Fatal("id number changed")
+	}
+	if r2.Lock.Messages["public.users"].Fields["etag"].Number != 3 {
+		t.Fatalf("etag = %d", r2.Lock.Messages["public.users"].Fields["etag"].Number)
+	}
+	if len(r2.Lock.Messages["public.users"].ReservedNumbers) == 0 {
+		t.Fatal("password number should be reserved")
+	}
+}
+
 func TestTypeChangeBreaks(t *testing.T) {
 	cfg := config.Defaults()
 	mapped := &mapping.Schema{
