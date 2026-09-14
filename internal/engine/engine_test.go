@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/catalog"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/engine"
 )

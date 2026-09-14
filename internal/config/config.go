@@ -146,7 +146,7 @@ overrides:
 `) + "\n"
 }
 
-func WriteFile(path string, contents string, force bool) error {
+func WriteFile(path, contents string, force bool) error {
 	if !force {
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Errorf("%s already exists (use --force to overwrite)", path)

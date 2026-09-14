@@ -6,9 +6,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/spf13/cobra"
+
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/config"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/engine"
-	"github.com/spf13/cobra"
 )
 
 func Execute(ctx context.Context) error {
@@ -41,7 +42,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 	initCmd := &cobra.Command{
 		Use:   "init",
 		Short: "Write a .pg2proto.yaml template",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if initCfg == "" {
 				initCfg = ".pg2proto.yaml"
 			}
@@ -68,7 +69,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 	genCmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate .proto files and update the lock file",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			opt := engine.Options{
 				Conn:           conn,
 				Schemas:        schemas,
@@ -108,7 +109,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 	checkCmd := &cobra.Command{
 		Use:   "check",
 		Short: "Fail if the schema is wire-incompatible with the lock file",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := os.Stat(lockFile); err != nil {
 				if os.IsNotExist(err) {
 					return errExit(ExitErrorCode, "lock file %s not found", lockFile)

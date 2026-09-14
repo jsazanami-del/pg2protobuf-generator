@@ -155,11 +155,14 @@ validate の yaml キーと生成物の対応:
 - `import "buf/validate/validate.proto"` は出しますが、`buf.yaml` の deps は自分で用意してください。このツールは `buf generate` を呼びません。
 - 未知の PostgreSQL 型と composite は、既定で `google.protobuf.Any` になります。写像漏れをエラーにしたいときは `--strict-types` または `options.strict_types: true` を使います。
 
-## テスト
+## テスト / lint
 
 Go のソースは `cmd/` と `internal/` にあります。リポジトリ直下で `go test` だけを実行すると `no Go files` で失敗します。サブパッケージまで含めてください。
 
 ```bash
 go test ./...
+golangci-lint run
 ```
+
+設定は [`.golangci.yml`](.golangci.yml) です。CI は push / pull request で `golangci-lint` と `go test -race ./...` を回します。
 )

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/catalog"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/config"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/emit"

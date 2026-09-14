@@ -6,10 +6,11 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/config"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/mapping"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/naming"
-	"gopkg.in/yaml.v3"
 )
 
 const Version = "1"

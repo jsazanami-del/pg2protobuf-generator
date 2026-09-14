@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/catalog"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/config"
 	"github.com/jsazanami-del/pg2protobuf-generator/internal/naming"
@@ -161,16 +162,8 @@ func mapColumn(
 	}
 
 	applyOverrides(&f, rel, col, cfg, baseName)
-	if f.Repeated && !isMessageType(f.ProtoType) {
-		// presence does not apply to repeated
-	} else if isMessageType(f.ProtoType) {
-		// submessages have presence without optional; keep Optional only for scalars
-		if !f.Repeated {
-			f.Optional = false
-			if !col.NotNull {
-				f.Optional = true
-			}
-		}
+	if isMessageType(f.ProtoType) && !f.Repeated {
+		f.Optional = !col.NotNull
 	}
 
 	if !cfg.Options.Validate {
@@ -378,9 +371,6 @@ func applyOverrides(f *Field, rel catalog.Relation, col catalog.Column, cfg *con
 	if ov.ProtoType != "" {
 		f.ProtoType = ov.ProtoType
 		f.Custom = true
-		if isMessageType(ov.ProtoType) && !f.Repeated {
-			// keep optional from nullability for custom messages too
-		}
 	}
 	if ov.Import != "" {
 		f.Imports = append(f.Imports, ov.Import)
