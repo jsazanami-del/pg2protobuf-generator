@@ -65,6 +65,39 @@ messages:
 	}
 }
 
+func TestOutputSchemaAlias(t *testing.T) {
+	cfg := config.Defaults()
+	if cfg.OutputSchema("public") != "public" {
+		t.Fatalf("default alias: %q", cfg.OutputSchema("public"))
+	}
+	cfg.Proto.Schemas["public"] = "yagish"
+	if cfg.OutputSchema("public") != "yagish" {
+		t.Fatalf("aliased: %q", cfg.OutputSchema("public"))
+	}
+	if cfg.OutputSchema("app") != "app" {
+		t.Fatalf("unmapped: %q", cfg.OutputSchema("app"))
+	}
+	cfg.Proto.Schemas["app"] = ""
+	if cfg.OutputSchema("app") != "app" {
+		t.Fatalf("empty alias should keep PG name: %q", cfg.OutputSchema("app"))
+	}
+}
+
+func TestLoadProtoSchemas(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(p, []byte("proto:\n  schemas:\n    public: yagish\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OutputSchema("public") != "yagish" {
+		t.Fatalf("loaded alias: %q", cfg.OutputSchema("public"))
+	}
+}
+
 func TestExcludesObjectAndSelectsRelation(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Tables.Exclude = []string{"_*", "order_status", "app.hidden"}

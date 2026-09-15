@@ -215,7 +215,7 @@ var id pgtype.Int4
 
 | 対象 | 規則 |
 | :--- | :--- |
-| ファイル（relation） | `{out}/{schema}/{relation}.proto`（PG 名を snake のまま） |
+| ファイル（relation） | `{out}/{schema}/{relation}.proto`（PG 名を snake のまま。`proto.schemas` で `{schema}` を差し替え可） |
 | ファイル（ENUM） | `{out}/{schema}/{enum_type}.proto` |
 | package | `{package_prefix}.{schema}`（テーブルごと package にしない） |
 | `go_package` | `{go_package_prefix}/{schema}` |
@@ -226,7 +226,7 @@ var id pgtype.Int4
 
 識別子が proto 予約語または不正な場合は末尾 `_` を付け、lock に `proto_name` を記録する。enum ラベルの不正文字は `_` に置換する。
 
-テーブル proto は、参照する同じスキーマの enum ファイルを `import` する。
+テーブル proto は、参照する同じスキーマの enum ファイルを `import` する。`proto.schemas` で PG スキーマ名を出力名に写すと、ディレクトリ・package 末尾・enum import がそれに従う。lock と yaml のキー（`public.users` など）は PG 名のまま。
 
 生成ファイル先頭:
 
@@ -357,6 +357,8 @@ version: "1"
 proto:
   package_prefix: "db.v1"
   go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  schemas:
+    public: yagish          # 出力ディレクトリ / package 末尾。lock キーは public のまま
 
 options:
   jsonb_as_struct: false  # true なら json/jsonb を google.protobuf.Struct

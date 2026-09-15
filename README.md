@@ -46,7 +46,7 @@ pg2proto check
 
 生成物:
 
-- `{--out}/{schema}/{relation}.proto`（既定の `--out` は `./proto`）
+- `{--out}/{schema}/{relation}.proto`（既定の `--out` は `./proto`。`proto.schemas` でディレクトリ名を差し替え可）
 - `{--out}/{schema}/{enum_type}.proto`
 - `.pg2proto.lock`
 
@@ -90,6 +90,8 @@ version: "1"
 proto:
   package_prefix: "db.v1"
   go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  schemas:
+    public: yagish          # package / 出力ディレクトリの末尾を public から差し替え
 
 options:
   jsonb_as_struct: false  # true なら json/jsonb を google.protobuf.Struct
@@ -146,6 +148,7 @@ overrides:
 | :--- | :--- |
 | `proto.package_prefix` | `package {prefix}.{schema};` |
 | `proto.go_package_prefix` | `option go_package = "{prefix}/{schema}";` |
+| `proto.schemas` | PG スキーマ名 → 出力ディレクトリ / package 末尾。lock や yaml のキーは PG 名のまま |
 | `options.jsonb_as_struct` | json/jsonb を Struct にする |
 | `options.validate` | uuid / varchar `max_len` / date pattern などの自動アノテーション |
 | `options.strict_types` | 未知型をエラーにする。`false` なら `google.protobuf.Any` |
@@ -168,6 +171,12 @@ validate の yaml キーと生成物の対応:
 | `cel: "..."` | `(buf.validate.field).cel` |
 
 extra のキー: `name`（lock のキー兼 proto 名）、`proto_type`、`optional` / `repeated`（排他）、`import`、`validate`、`comment`。番号は YAML に書かない。`google.protobuf.*` は import 省略可。それ以外のカスタム型は `import` 必須。カタログ列と同名の extra はエラー（型の差し替えは `overrides.columns`）。
+
+`proto.schemas` の例（`public` → `yagish`）:
+
+- `package yagish_data.v1.yagish;`
+- `{--out}/yagish/users.proto`
+- lock キーは `public.users` のまま
 
 omit した列の番号は lock の `reserved` に残る。omit と extra を同時にしても未宣言リネームにはしない。
 

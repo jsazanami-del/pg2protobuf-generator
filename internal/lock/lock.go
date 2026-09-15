@@ -399,15 +399,16 @@ func nextNumber(used map[int]bool) int {
 func buildIR(mapped *mapping.Schema, lk *File, cfg *config.Config) *IR {
 	filesByPath := map[string]*ProtoFile{}
 	file := func(schema, name string) *ProtoFile {
-		path := schema + "/" + name + ".proto"
+		outSchema := cfg.OutputSchema(schema)
+		path := outSchema + "/" + name + ".proto"
 		if f, ok := filesByPath[path]; ok {
 			return f
 		}
 		f := &ProtoFile{
 			Path:      path,
-			Schema:    schema,
-			Package:   joinDots(cfg.Proto.PackagePrefix, schema),
-			GoPackage: joinSlash(cfg.Proto.GoPackagePrefix, schema),
+			Schema:    outSchema,
+			Package:   joinDots(cfg.Proto.PackagePrefix, outSchema),
+			GoPackage: joinSlash(cfg.Proto.GoPackagePrefix, outSchema),
 		}
 		filesByPath[path] = f
 		return f

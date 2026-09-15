@@ -242,6 +242,33 @@ func TestExtraOptionalAndRepeatedRejected(t *testing.T) {
 	}
 }
 
+func TestEnumImportUsesOutputSchema(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Proto.Schemas["public"] = "yagish"
+	snap := &catalog.Snapshot{
+		Enums: []catalog.Enum{{Schema: "public", Name: "order_status", OID: 99901, Labels: []string{"pending"}}},
+		Relations: []catalog.Relation{{
+			Schema:  "public",
+			Name:    "users",
+			Columns: []catalog.Column{{Name: "status", TypeOID: 99901, TypeName: "order_status", TypeType: 'e', TypeSchema: "public", NotNull: true}},
+		}},
+	}
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := got.Relations[0].Fields[0]
+	if f.ProtoType != "OrderStatus" {
+		t.Fatalf("type %s", f.ProtoType)
+	}
+	if !contains(f.Imports, "yagish/order_status.proto") {
+		t.Fatalf("imports %v", f.Imports)
+	}
+	if contains(f.Imports, "public/order_status.proto") {
+		t.Fatalf("PG schema leaked into import: %v", f.Imports)
+	}
+}
+
 func TestExcludedEnumMapsToString(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Tables.Exclude = []string{"order_status"}

@@ -199,7 +199,7 @@ func mapEnumType(e catalog.Enum, cfg *config.Config) mappedType {
 	return mappedType{
 		ProtoType: naming.PascalCase(e.Name),
 		PGType:    e.Name,
-		Imports:   []string{e.Schema + "/" + e.Name + ".proto"},
+		Imports:   []string{cfg.OutputSchema(e.Schema) + "/" + e.Name + ".proto"},
 	}
 }
 

@@ -120,6 +120,63 @@ overrides:
 	}
 }
 
+func TestSchemaAliasRewritesPackageAndDir(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	yaml := `version: "1"
+proto:
+  package_prefix: "yagish_data.v1"
+  go_package_prefix: "github.com/example/app/gen/proto/yagish_data/v1"
+  schemas:
+    public: yagish
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      filepath.Join(dir, "proto"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.Files["public/users.proto"]; ok {
+		t.Fatal("PG schema directory should not be used")
+	}
+	users := res.Files["yagish/users.proto"]
+	if users == "" {
+		t.Fatalf("files: %v", keys(res.Files))
+	}
+	for _, want := range []string{
+		"package yagish_data.v1.yagish;",
+		`option go_package = "github.com/example/app/gen/proto/yagish_data/v1/yagish";`,
+		`import "yagish/order_status.proto";`,
+		"OrderStatus status",
+	} {
+		if !strings.Contains(users, want) {
+			t.Fatalf("missing %q in\n%s", want, users)
+		}
+	}
+	if _, ok := res.Files["yagish/order_status.proto"]; !ok {
+		t.Fatal("enum should be under the aliased directory")
+	}
+	if _, ok := res.Lock.Messages["public.users"]; !ok {
+		t.Fatal("lock keys should keep the PostgreSQL schema")
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestExcludeEnumFallsBackToString(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".pg2proto.yaml")

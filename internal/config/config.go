@@ -24,8 +24,9 @@ type Config struct {
 }
 
 type Proto struct {
-	PackagePrefix   string `yaml:"package_prefix"`
-	GoPackagePrefix string `yaml:"go_package_prefix"`
+	PackagePrefix   string            `yaml:"package_prefix"`
+	GoPackagePrefix string            `yaml:"go_package_prefix"`
+	Schemas         map[string]string `yaml:"schemas"`
 }
 
 type Options struct {
@@ -88,6 +89,7 @@ func Defaults() *Config {
 		Version: Version,
 		Proto: Proto{
 			PackagePrefix: "db.v1",
+			Schemas:       map[string]string{},
 		},
 		Options: Options{
 			Validate: true,
@@ -134,7 +136,18 @@ func Load(path string) (*Config, error) {
 	if cfg.Messages == nil {
 		cfg.Messages = map[string]MessageSpec{}
 	}
+	if cfg.Proto.Schemas == nil {
+		cfg.Proto.Schemas = map[string]string{}
+	}
 	return cfg, nil
+}
+
+// OutputSchema is the directory / package suffix for a PostgreSQL schema.
+func (c *Config) OutputSchema(pgSchema string) string {
+	if alias := c.Proto.Schemas[pgSchema]; alias != "" {
+		return alias
+	}
+	return pgSchema
 }
 
 // MatchGlob reports whether any name matches any path.Match pattern.
@@ -199,6 +212,7 @@ version: "1"
 proto:
   package_prefix: "db.v1"
   go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  schemas: {}  # PG schema -> 出力ディレクトリ / package 末尾（例: public: yagish）
 
 options:
   jsonb_as_struct: false
