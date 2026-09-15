@@ -78,6 +78,9 @@ func Apply(snap *catalog.Snapshot, cfg *config.Config, resolver TypeResolver, lo
 	for _, e := range snap.Enums {
 		enumByOID[e.OID] = e
 		enumByName[e.Key()] = e
+		if cfg.ExcludesObject(e.Schema, e.Name) {
+			continue
+		}
 		me := Enum{
 			Schema:    e.Schema,
 			Name:      e.Name,
@@ -118,7 +121,34 @@ func Apply(snap *catalog.Snapshot, cfg *config.Config, resolver TypeResolver, lo
 		mr.Fields = append(mr.Fields, extras...)
 		out.Relations = append(out.Relations, mr)
 	}
+	if err := detectOutputCollisions(out, cfg); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func detectOutputCollisions(out *Schema, cfg *config.Config) error {
+	rels := map[string]string{}
+	enums := map[string]string{}
+	add := func(seen map[string]string, pgSchema, name, key string) error {
+		path := cfg.OutputFile(pgSchema, name)
+		if prev, ok := seen[path]; ok && prev != key {
+			return fmt.Errorf("output file %s collides (%s and %s); map schemas to different proto packages", path, prev, key)
+		}
+		seen[path] = key
+		return nil
+	}
+	for _, rel := range out.Relations {
+		if err := add(rels, rel.Schema, rel.Name, rel.Key()); err != nil {
+			return err
+		}
+	}
+	for _, en := range out.Enums {
+		if err := add(enums, en.Schema, en.Name, en.Key()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func mapColumn(
@@ -156,9 +186,7 @@ func mapColumn(
 	}
 
 	if e, ok := enumByOID[baseOID]; ok {
-		f.PGType = e.Name
-		f.ProtoType = naming.PascalCase(e.Name)
-		f.Imports = append(f.Imports, e.Schema+"/"+e.Name+".proto")
+		applyEnumType(&f, e, cfg)
 	} else {
 		mapped, err := mapOID(baseOID, baseName, baseSchema, col.TypeMod, cfg, resolver, loader, enumByName)
 		if err != nil {
@@ -182,6 +210,24 @@ func mapColumn(
 	}
 	f.Imports = uniq(f.Imports)
 	return f, nil
+}
+
+func applyEnumType(f *Field, e catalog.Enum, cfg *config.Config) {
+	mapped := mapEnumType(e, cfg)
+	f.PGType = mapped.PGType
+	f.ProtoType = mapped.ProtoType
+	f.Imports = append(f.Imports, mapped.Imports...)
+}
+
+func mapEnumType(e catalog.Enum, cfg *config.Config) mappedType {
+	if cfg.ExcludesObject(e.Schema, e.Name) {
+		return mappedType{ProtoType: "string", PGType: e.Name}
+	}
+	return mappedType{
+		ProtoType: naming.PascalCase(e.Name),
+		PGType:    e.Name,
+		Imports:   []string{cfg.OutputFile(e.Schema, e.Name)},
+	}
 }
 
 func extraFields(rel catalog.Relation, cfg *config.Config, existing []Field) ([]Field, error) {
@@ -338,7 +384,7 @@ func mapOID(oid uint32, typeName, typeSchema string, typmod int32, cfg *config.C
 
 	key := typeSchema + "." + typeName
 	if e, ok := enumByName[key]; ok {
-		return mappedType{ProtoType: naming.PascalCase(e.Name), PGType: e.Name, Imports: []string{e.Schema + "/" + e.Name + ".proto"}}, nil
+		return mapEnumType(e, cfg), nil
 	}
 
 	if ov, ok := cfg.Overrides.Types[typeName]; ok && ov.ProtoType != "" {

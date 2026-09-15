@@ -181,3 +181,70 @@ func TestSkipProtobufInternalRange(t *testing.T) {
 		t.Fatalf("got %d", r.Lock.Messages["public.t"].Fields["x"].Number)
 	}
 }
+
+func TestExcludedEnumDroppedFromLockOnce(t *testing.T) {
+	cfg := config.Defaults()
+	mapped := &mapping.Schema{
+		Enums: []mapping.Enum{{
+			Schema:    "public",
+			Name:      "order_status",
+			ProtoName: "OrderStatus",
+			Values:    []mapping.EnumValue{{Label: "pending", ProtoName: "ORDER_STATUS_PENDING"}},
+		}},
+		Relations: []mapping.Relation{{
+			Schema:    "public",
+			Name:      "users",
+			ProtoName: "Users",
+			Fields: []mapping.Field{
+				{Column: "status", ProtoName: "status", ProtoType: "OrderStatus", PGType: "order_status"},
+			},
+		}},
+	}
+	r1 := lock.Assign(lock.Empty(), mapped, cfg)
+	if _, ok := r1.Lock.Enums["public.order_status"]; !ok {
+		t.Fatal("expected enum in lock")
+	}
+
+	cfg.Tables.Exclude = []string{"order_status"}
+	mapped.Enums = nil
+	mapped.Relations[0].Fields[0].ProtoType = "string"
+	r2 := lock.Assign(r1.Lock, mapped, cfg)
+	if len(r2.Breaking) == 0 {
+		t.Fatal("expected first exclude to be breaking")
+	}
+	if _, ok := r2.Lock.Enums["public.order_status"]; ok {
+		t.Fatal("excluded enum should be dropped from the next lock")
+	}
+	if r2.Lock.Messages["public.users"].Fields["status"].ProtoType != "string" {
+		t.Fatalf("status type: %+v", r2.Lock.Messages["public.users"].Fields["status"])
+	}
+
+	r3 := lock.Assign(r2.Lock, mapped, cfg)
+	if len(r3.Breaking) != 0 {
+		t.Fatalf("second pass should be compatible: %v", r3.Breaking)
+	}
+	if _, ok := r3.Lock.Enums["public.order_status"]; ok {
+		t.Fatal("excluded enum should stay out of the lock")
+	}
+}
+
+func TestMissingEnumStillRetained(t *testing.T) {
+	cfg := config.Defaults()
+	mapped := &mapping.Schema{
+		Enums: []mapping.Enum{{
+			Schema:    "public",
+			Name:      "order_status",
+			ProtoName: "OrderStatus",
+			Values:    []mapping.EnumValue{{Label: "pending", ProtoName: "ORDER_STATUS_PENDING"}},
+		}},
+	}
+	r1 := lock.Assign(lock.Empty(), mapped, cfg)
+	mapped.Enums = nil
+	r2 := lock.Assign(r1.Lock, mapped, cfg)
+	if _, ok := r2.Lock.Enums["public.order_status"]; !ok {
+		t.Fatal("dropped-from-db enum should stay in the lock")
+	}
+	if len(r2.Breaking) == 0 {
+		t.Fatal("expected missing-from-database breaking change")
+	}
+}

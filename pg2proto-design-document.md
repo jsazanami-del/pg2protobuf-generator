@@ -57,13 +57,13 @@ pg2proto [subcommand] [flags]
 | :--- | :--- | :--- | :--- |
 | `--conn` | `-c` | `$DATABASE_URL` | PostgreSQL 接続文字列（DSN） |
 | `--schema` | `-s` | `public` | 対象スキーマ（複数指定可） |
-| `--out` | `-o` | `./proto` | `.proto` の出力先ディレクトリ |
+| `--out` | `-o` | `./proto` | `.proto` の出力先ディレクトリ（yaml の `proto.out` より優先） |
 | `--config` | | `.pg2proto.yaml` | 設定ファイル |
 | `--lock-file` | | `.pg2proto.lock` | lock ファイル |
 | `--dry-run` | | `false` | `.proto` も lock も書かない。preview を stdout へ |
 | `--force` | | `false` | 非互換があっても lock を更新する（`reserved` は維持する） |
 | `--prune` | | `false` | DB から消えた relation / enum の生成ファイルを削除する。無い場合は stale を残し、`check` は fail |
-| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算） |
+| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算。relation と ENUM に適用） |
 | `--strict-types` | | `false` | 未知型・composite / `record` でエラーにする。既定は `google.protobuf.Any`（yaml `options.strict_types` より優先） |
 
 非互換な変更があるとき、`--force` 無しの `generate` は終了コード `1` で失敗し、ファイルを更新しない。
@@ -79,6 +79,7 @@ fail 条件:
 - 非互換な `proto_type` 変更（例: `int32` → `string`、`string` → カスタム message）
 - カラム / enum ラベルのリネームが yaml / lock の `renames` で未宣言
 - 対象だった relation / enum の削除（`--prune` 前の状態）
+- 既存 lock にある ENUM を `exclude` したことによる proto enum 削除、および参照列の `enum` → `string`
 
 互換な追加（新カラムに新番号、新 enum ラベルに `max+1`）は OK。
 
@@ -124,7 +125,7 @@ atttypid (OID)
 | （`relispartition`） | パーティション子 | 除外 |
 | `S` / `c` など | シーケンス / composite type | 除外 |
 
-対象 ENUM: 選択スキーマ内の `pg_type.typtype = 'e'`。カラムからの参照有無を問わず出す。
+対象 ENUM: 選択スキーマ内の `pg_type.typtype = 'e'`。カラムからの参照有無を問わず出す。`tables.exclude` / `--exclude` にマッチした ENUM は proto を出さず、参照列は `string`（配列は `repeated string`）にする。
 
 除外する列:
 
@@ -214,10 +215,10 @@ var id pgtype.Int4
 
 | 対象 | 規則 |
 | :--- | :--- |
-| ファイル（relation） | `{out}/{schema}/{relation}.proto`（PG 名を snake のまま） |
-| ファイル（ENUM） | `{out}/{schema}/{enum_type}.proto` |
-| package | `{package_prefix}.{schema}`（テーブルごと package にしない） |
-| `go_package` | `{go_package_prefix}/{schema}` |
+| ファイル（relation） | `{out}/{package}/{relation}.proto`（package の `.` を `/` にする。buf `PACKAGE_DIRECTORY_MATCH`） |
+| ファイル（ENUM） | `{out}/{package}/{enum_type}.proto` |
+| package | `{package_prefix}` または `proto.schemas.<pg>`。末尾は `v1` など（buf `PACKAGE_VERSION_SUFFIX`）。テーブルごと package にしない |
+| `go_package` | `{go_package_prefix}/{package}`（prefix がすでに package パスで終わっていればそのまま） |
 | message 名 | テーブル / view 名を PascalCase。**自動単数化しない**（`users` → `Users`） |
 | enum 型名 | PG 型名を PascalCase（`order_status` → `OrderStatus`） |
 | enum 値 | `{ENUM}_UNSPECIFIED = 0` を合成。PG ラベルは `{ENUM}_{LABEL}` の UPPER_SNAKE |
@@ -225,7 +226,7 @@ var id pgtype.Int4
 
 識別子が proto 予約語または不正な場合は末尾 `_` を付け、lock に `proto_name` を記録する。enum ラベルの不正文字は `_` に置換する。
 
-テーブル proto は、参照する同じスキーマの enum ファイルを `import` する。
+配置は buf STANDARD に従う。`proto.out` は buf module root と一致させる。テーブル proto は同じ proto package の enum を `import` する。`proto.schemas` は PG スキーマを別 proto package に写す。lock と yaml のキー（`public.users` など）は PG 名のまま。
 
 生成ファイル先頭:
 
@@ -235,7 +236,9 @@ var id pgtype.Int4
 
 ### 3.6 PG ENUM → proto enum
 
-pgx は ENUM を主に string としてスキャンする。proto は共有語彙なので **`enum` にする**（デフォルトで string に落とさない）。override で特定 ENUM を `string` にすることは可。
+pgx は ENUM を主に string としてスキャンする。proto は共有語彙なので **`enum` にする**（デフォルトで string に落とさない）。`tables.exclude` / `--exclude` で除外した ENUM、および override で `string` にした ENUM は string に落とす。
+
+すでに lock にある ENUM を除外すると、ENUM proto の削除と参照列の型変更は非互換になる。`generate --force --prune` で lock から落とし、生成ファイルを消す。以降の `check` は再検出しない。
 
 - ラベル一覧は `pg_enum.enumlabel`
 - **値番号に `enumsortorder` を使わない**（`ADD VALUE ... BEFORE` で順序が変わってもワイヤ番号は不変）
@@ -245,14 +248,14 @@ pgx は ENUM を主に string としてスキャンする。proto は共有語�
 - NULL な enum 列は `optional OrderStatus`。0 は「未指定」、NULL はフィールド無し
 - ENUM 配列は `repeated OrderStatus`
 
-例（`public.order_status`）:
+例（`public.order_status` → `proto/db/v1/order_status.proto`）:
 
 ```protobuf
 syntax = "proto3";
 
-package db.v1.public;
+package db.v1;
 
-option go_package = "github.com/example/app/gen/proto/db/v1/public";
+option go_package = "github.com/example/app/gen/proto/db/v1";
 
 enum OrderStatus {
   ORDER_STATUS_UNSPECIFIED = 0;
@@ -318,6 +321,7 @@ enums:
 - **型・カラム override**: `proto_type` / `import` / validate（protovalidate と 1:1）
 - **omit**: カタログ列を生成しない。glob は `column` / `relation.column` / `schema.relation.column`
 - **extra**: カタログに無いフィールドを足す。`fields.extra` は全 message、`messages.<schema.relation>.extra` は当該 message。番号は lock が振る
+- **exclude**: `tables.exclude` / `--exclude` は relation と ENUM に適用。除外 ENUM の参照列は `string`
 
 できないこと:
 
@@ -352,7 +356,10 @@ version: "1"
 
 proto:
   package_prefix: "db.v1"
-  go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  go_package_prefix: "github.com/example/app/gen/proto"
+  out: "./proto"
+  schemas:
+    public: yagish_data.v1  # PG schema -> proto package。lock キーは public のまま
 
 options:
   jsonb_as_struct: false  # true なら json/jsonb を google.protobuf.Struct
@@ -361,7 +368,7 @@ options:
 
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
-  exclude: ["_*"]         # glob（schema.relation または relation）
+  exclude: ["_*"]         # glob。relation / enum の schema.name または name
 
 fields:
   omit: ["password", "*_hash"]
@@ -423,19 +430,19 @@ validate キーは出す protovalidate と 1:1 にする。
 
 ## 6. 生成物例
 
-### 6.1 `proto/public/users.proto`
+### 6.1 `proto/db/v1/users.proto`
 
 ```protobuf
 // Code generated by pg2proto. DO NOT EDIT.
 syntax = "proto3";
 
-package db.v1.public;
+package db.v1;
 
-option go_package = "github.com/example/app/gen/proto/db/v1/public";
+option go_package = "github.com/example/app/gen/proto/db/v1";
 
 import "buf/validate/validate.proto";
+import "db/v1/order_status.proto";
 import "google/protobuf/timestamp.proto";
-import "public/order_status.proto";
 
 message Users {
   int64 id = 1;
@@ -463,6 +470,11 @@ validate 付き proto をコンパイルするには、利用者が例えば次�
 ```yaml
 # buf.yaml（利用者が管理）
 version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
 deps:
   - buf.build/bufbuild/protovalidate
 ```

@@ -23,6 +23,7 @@ type Options struct {
 	Conn           string
 	Schemas        []string
 	Out            string
+	OutSet         bool
 	Config         string
 	LockFile       string
 	DryRun         bool
@@ -39,14 +40,12 @@ type Result struct {
 	Files    map[string]string
 	Lock     *lock.File
 	Breaking []string
+	Out      string
 }
 
 func Run(ctx context.Context, opt Options) (*Result, error) {
 	if len(opt.Schemas) == 0 {
 		opt.Schemas = []string{"public"}
-	}
-	if opt.Out == "" {
-		opt.Out = "./proto"
 	}
 	if opt.LockFile == "" {
 		opt.LockFile = ".pg2proto.lock"
@@ -68,6 +67,9 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		strictTypes = &v
 	}
 	cfg.MergeFlags(opt.Exclude, strictTypes)
+	if err := cfg.ValidateProto(); err != nil {
+		return nil, err
+	}
 
 	snap := opt.Snapshot
 	var conn *pgx.Conn
@@ -112,7 +114,33 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Files: files, Lock: assigned.Lock, Breaking: assigned.Breaking}, nil
+	return &Result{Files: files, Lock: assigned.Lock, Breaking: assigned.Breaking, Out: resolveOut(opt, cfg)}, nil
+}
+
+func resolveOut(opt Options, cfg *config.Config) string {
+	if opt.OutSet {
+		if opt.Out != "" {
+			return opt.Out
+		}
+		return "./proto"
+	}
+	if cfg != nil && cfg.Proto.Out != "" {
+		return cfg.Proto.Out
+	}
+	if opt.Out != "" {
+		return opt.Out
+	}
+	return "./proto"
+}
+
+func outputDir(opt Options, res *Result) string {
+	if res != nil && res.Out != "" {
+		return res.Out
+	}
+	if opt.Out != "" {
+		return opt.Out
+	}
+	return "./proto"
 }
 
 func Write(opt Options, res *Result) error {
@@ -125,11 +153,12 @@ func Write(opt Options, res *Result) error {
 		}
 		return nil
 	}
-	if err := os.MkdirAll(opt.Out, 0o755); err != nil {
+	out := outputDir(opt, res)
+	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}
 	for relPath, body := range res.Files {
-		full := filepath.Join(opt.Out, filepath.FromSlash(relPath))
+		full := filepath.Join(out, filepath.FromSlash(relPath))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
@@ -141,7 +170,7 @@ func Write(opt Options, res *Result) error {
 		return err
 	}
 	if opt.Prune {
-		return prune(opt.Out, res.Files)
+		return prune(out, res.Files)
 	}
 	return nil
 }
@@ -179,26 +208,11 @@ func prune(out string, keep map[string]string) error {
 func filterSnapshot(snap *catalog.Snapshot, cfg *config.Config) {
 	var rels []catalog.Relation
 	for _, r := range snap.Relations {
-		if match(r.Schema, r.Name, cfg.Tables.Include, cfg.Tables.Exclude) {
+		if cfg.SelectsRelation(r.Schema, r.Name) {
 			rels = append(rels, r)
 		}
 	}
 	snap.Relations = rels
-}
-
-func match(schema, name string, include, exclude []string) bool {
-	key := schema + "." + name
-	if len(include) > 0 && !anyGlob(include, key, name) {
-		return false
-	}
-	if anyGlob(exclude, key, name) {
-		return false
-	}
-	return true
-}
-
-func anyGlob(patterns []string, names ...string) bool {
-	return config.MatchGlob(patterns, names...)
 }
 
 func sortedKeys(m map[string]string) []string {

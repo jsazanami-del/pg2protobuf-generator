@@ -46,8 +46,8 @@ pg2proto check
 
 生成物:
 
-- `{--out}/{schema}/{relation}.proto`（既定の `--out` は `./proto`）
-- `{--out}/{schema}/{enum_type}.proto`
+- `{out}/{package}/{relation}.proto`（既定 package は `db.v1` → `{out}/db/v1/users.proto`）
+- `{out}/{package}/{enum_type}.proto`
 - `.pg2proto.lock`
 
 ### `generate` / `check` のフラグ
@@ -56,13 +56,13 @@ pg2proto check
 | :--- | :--- | :--- | :--- |
 | `--conn` | `-c` | `$DATABASE_URL` | PostgreSQL 接続文字列 |
 | `--schema` | `-s` | `public` | 対象スキーマ（複数可） |
-| `--out` | `-o` | `./proto` | `.proto` の出力先 |
+| `--out` | `-o` | `./proto` | `.proto` の出力先（yaml の `proto.out` より優先） |
 | `--config` | | `.pg2proto.yaml` | 設定ファイル |
 | `--lock-file` | | `.pg2proto.lock` | lock ファイル |
 | `--dry-run` | | `false` | ファイルを書かず stdout に出す（`generate` のみ） |
 | `--force` | | `false` | 非互換でも lock を更新する（`generate` のみ。`reserved` は維持） |
 | `--prune` | | `false` | 消えた relation / enum の生成 proto を削除（`generate` のみ） |
-| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算） |
+| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算。relation と ENUM に適用） |
 | `--strict-types` | | `false` | 未知型・composite でエラー。既定は `google.protobuf.Any` |
 
 ```bash
@@ -89,7 +89,10 @@ version: "1"
 
 proto:
   package_prefix: "db.v1"
-  go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  go_package_prefix: "github.com/example/app/gen/proto"
+  out: "./proto"
+  schemas:
+    public: yagish_data.v1   # PG schema を別 proto package にするとき
 
 options:
   jsonb_as_struct: false  # true なら json/jsonb を google.protobuf.Struct
@@ -98,7 +101,7 @@ options:
 
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
-  exclude: ["_*"]         # glob。schema.relation または relation にマッチ
+  exclude: ["_*"]         # glob。relation / enum の schema.name または name にマッチ
 
 fields:
   omit: ["password", "*_hash"]   # glob。column / relation.column / schema.relation.column
@@ -144,12 +147,14 @@ overrides:
 
 | キー | 内容 |
 | :--- | :--- |
-| `proto.package_prefix` | `package {prefix}.{schema};` |
-| `proto.go_package_prefix` | `option go_package = "{prefix}/{schema}";` |
+| `proto.package_prefix` | proto package。末尾は `v1` など（buf `PACKAGE_VERSION_SUFFIX`）。ファイルは `{out}/{package}/` |
+| `proto.go_package_prefix` | `option go_package` の親。`{prefix}/{package}` になる（すでに package パスで終わっていればそのまま） |
+| `proto.out` | buf module root。未指定なら `./proto`。`--out` があればフラグが優先 |
+| `proto.schemas` | PG スキーマ → 別 proto package。省略時は `package_prefix`。lock / yaml キーは PG 名のまま |
 | `options.jsonb_as_struct` | json/jsonb を Struct にする |
 | `options.validate` | uuid / varchar `max_len` / date pattern などの自動アノテーション |
 | `options.strict_types` | 未知型をエラーにする。`false` なら `google.protobuf.Any` |
-| `tables.include` / `exclude` | 対象 relation の glob。include が空なら全件 |
+| `tables.include` / `exclude` | 対象 relation の glob。include が空なら全件。`exclude` は ENUM にも適用し、除外した ENUM を参照する列は `string`（配列は `repeated string`）になる |
 | `fields.omit` | 生成しない列の glob（`column` / `relation.column` / `schema.relation.column`） |
 | `fields.extra` | 全 message に足すフィールド。番号は lock が振る |
 | `messages` | `schema.relation` 単位の omit / extra。グローバルに加算 |
@@ -169,14 +174,24 @@ validate の yaml キーと生成物の対応:
 
 extra のキー: `name`（lock のキー兼 proto 名）、`proto_type`、`optional` / `repeated`（排他）、`import`、`validate`、`comment`。番号は YAML に書かない。`google.protobuf.*` は import 省略可。それ以外のカスタム型は `import` 必須。カタログ列と同名の extra はエラー（型の差し替えは `overrides.columns`）。
 
+配置は buf STANDARD（`PACKAGE_DIRECTORY_MATCH` / `PACKAGE_VERSION_SUFFIX`）に合わせます。`package yagish_data.v1` ならファイルは `{proto.out}/yagish_data/v1/users.proto` です。`buf.yaml` の module `path` は `proto.out` と同じにしてください。
+
+`proto.schemas` の例（`public` → `yagish_data.v1`）:
+
+- `package yagish_data.v1;`
+- `{proto.out}/yagish_data/v1/users.proto`
+- lock キーは `public.users` のまま
+
 omit した列の番号は lock の `reserved` に残る。omit と extra を同時にしても未宣言リネームにはしない。
+
+すでに lock にある ENUM を `exclude` すると、ENUM proto の削除と参照列の `enum` → `string` が非互換になる。`generate --force --prune` で lock から落とし、生成ファイルを消す。以降の `check` は再検出しない。
 
 テンプレ全体の上書きはできません。
 
 ## 注意
 
-- 対象は `relkind` が table / view / matview のものと、対象スキーマ内の ENUM です。外部テーブル（FDW）とパーティション親・子は出しません。
-- `import "buf/validate/validate.proto"` は出しますが、`buf.yaml` の deps は自分で用意してください。このツールは `buf generate` を呼びません。
+- 対象は `relkind` が table / view / matview のものと、対象スキーマ内の ENUM です。`tables.exclude` / `--exclude` は両方に効きます。外部テーブル（FDW）とパーティション親・子は出しません。
+- 生成物は buf STANDARD を前提にします（package 末尾のバージョン、ディレクトリ一致、enum の `_UNSPECIFIED = 0`）。`import "buf/validate/validate.proto"` は出しますが、`buf.yaml` の deps は自分で用意してください。このツールは `buf generate` を呼びません。
 - 未知の PostgreSQL 型と composite は、既定で `google.protobuf.Any` になります。写像漏れをエラーにしたいときは `--strict-types` または `options.strict_types: true` を使います。
 
 ## テスト / lint

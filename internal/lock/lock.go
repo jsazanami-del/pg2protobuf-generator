@@ -176,6 +176,10 @@ func Assign(old *File, mapped *mapping.Schema, cfg *config.Config) *Result {
 	}
 	for key := range old.Enums {
 		if _, ok := currentEnum[key]; !ok {
+			if excludedEnum(key, cfg) {
+				breaking = append(breaking, fmt.Sprintf("enum %s is excluded (use --force to drop it from the lock; --prune to delete generated files)", key))
+				continue
+			}
 			next.Enums[key] = cloneEnum(old.Enums[key])
 			breaking = append(breaking, fmt.Sprintf("enum %s is missing from the database (use --prune to drop generated files)", key))
 		}
@@ -395,15 +399,16 @@ func nextNumber(used map[int]bool) int {
 func buildIR(mapped *mapping.Schema, lk *File, cfg *config.Config) *IR {
 	filesByPath := map[string]*ProtoFile{}
 	file := func(schema, name string) *ProtoFile {
-		path := schema + "/" + name + ".proto"
+		pkg := cfg.OutputPackage(schema)
+		path := cfg.OutputFile(schema, name)
 		if f, ok := filesByPath[path]; ok {
 			return f
 		}
 		f := &ProtoFile{
 			Path:      path,
-			Schema:    schema,
-			Package:   joinDots(cfg.Proto.PackagePrefix, schema),
-			GoPackage: joinSlash(cfg.Proto.GoPackagePrefix, schema),
+			Schema:    config.PackageDir(pkg),
+			Package:   pkg,
+			GoPackage: cfg.GoPackage(schema),
 		}
 		filesByPath[path] = f
 		return f
@@ -497,6 +502,14 @@ func buildIR(mapped *mapping.Schema, lk *File, cfg *config.Config) *IR {
 	return ir
 }
 
+func excludedEnum(key string, cfg *config.Config) bool {
+	schema, name, ok := strings.Cut(key, ".")
+	if !ok {
+		return cfg.ExcludesObject("", key)
+	}
+	return cfg.ExcludesObject(schema, name)
+}
+
 func protoReservedNames(labels []string, enumPascal string) []string {
 	out := make([]string, 0, len(labels))
 	for _, l := range labels {
@@ -512,28 +525,6 @@ func hasValidate(m *IRMessage) bool {
 		}
 	}
 	return false
-}
-
-func joinDots(prefix, schema string) string {
-	prefix = strings.Trim(prefix, ".")
-	if prefix == "" {
-		return schema
-	}
-	if schema == "" {
-		return prefix
-	}
-	return prefix + "." + schema
-}
-
-func joinSlash(prefix, schema string) string {
-	prefix = strings.Trim(prefix, "/")
-	if prefix == "" {
-		return schema
-	}
-	if schema == "" {
-		return prefix
-	}
-	return prefix + "/" + schema
 }
 
 func cloneMessage(m *Message) *Message {
