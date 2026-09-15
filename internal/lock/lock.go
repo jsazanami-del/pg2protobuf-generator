@@ -399,16 +399,16 @@ func nextNumber(used map[int]bool) int {
 func buildIR(mapped *mapping.Schema, lk *File, cfg *config.Config) *IR {
 	filesByPath := map[string]*ProtoFile{}
 	file := func(schema, name string) *ProtoFile {
-		outSchema := cfg.OutputSchema(schema)
-		path := outSchema + "/" + name + ".proto"
+		pkg := cfg.OutputPackage(schema)
+		path := cfg.OutputFile(schema, name)
 		if f, ok := filesByPath[path]; ok {
 			return f
 		}
 		f := &ProtoFile{
 			Path:      path,
-			Schema:    outSchema,
-			Package:   joinDots(cfg.Proto.PackagePrefix, outSchema),
-			GoPackage: joinSlash(cfg.Proto.GoPackagePrefix, outSchema),
+			Schema:    config.PackageDir(pkg),
+			Package:   pkg,
+			GoPackage: cfg.GoPackage(schema),
 		}
 		filesByPath[path] = f
 		return f
@@ -525,28 +525,6 @@ func hasValidate(m *IRMessage) bool {
 		}
 	}
 	return false
-}
-
-func joinDots(prefix, schema string) string {
-	prefix = strings.Trim(prefix, ".")
-	if prefix == "" {
-		return schema
-	}
-	if schema == "" {
-		return prefix
-	}
-	return prefix + "." + schema
-}
-
-func joinSlash(prefix, schema string) string {
-	prefix = strings.Trim(prefix, "/")
-	if prefix == "" {
-		return schema
-	}
-	if schema == "" {
-		return prefix
-	}
-	return prefix + "/" + schema
 }
 
 func cloneMessage(m *Message) *Message {

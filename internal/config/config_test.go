@@ -65,36 +65,84 @@ messages:
 	}
 }
 
-func TestOutputSchemaAlias(t *testing.T) {
+func TestOutputPackageAndFile(t *testing.T) {
 	cfg := config.Defaults()
-	if cfg.OutputSchema("public") != "public" {
-		t.Fatalf("default alias: %q", cfg.OutputSchema("public"))
+	if cfg.OutputPackage("public") != "db.v1" {
+		t.Fatalf("default package: %q", cfg.OutputPackage("public"))
 	}
-	cfg.Proto.Schemas["public"] = "yagish"
-	if cfg.OutputSchema("public") != "yagish" {
-		t.Fatalf("aliased: %q", cfg.OutputSchema("public"))
+	if cfg.OutputFile("public", "users") != "db/v1/users.proto" {
+		t.Fatalf("default file: %q", cfg.OutputFile("public", "users"))
 	}
-	if cfg.OutputSchema("app") != "app" {
-		t.Fatalf("unmapped: %q", cfg.OutputSchema("app"))
+	cfg.Proto.Schemas["public"] = "yagish_data.v1"
+	if cfg.OutputPackage("public") != "yagish_data.v1" {
+		t.Fatalf("mapped package: %q", cfg.OutputPackage("public"))
 	}
-	cfg.Proto.Schemas["app"] = ""
-	if cfg.OutputSchema("app") != "app" {
-		t.Fatalf("empty alias should keep PG name: %q", cfg.OutputSchema("app"))
+	if cfg.OutputFile("public", "users") != "yagish_data/v1/users.proto" {
+		t.Fatalf("mapped file: %q", cfg.OutputFile("public", "users"))
+	}
+	if cfg.OutputPackage("app") != "db.v1" {
+		t.Fatalf("unmapped: %q", cfg.OutputPackage("app"))
+	}
+	cfg.Proto.GoPackagePrefix = "github.com/example/app/gen/proto"
+	if g := cfg.GoPackage("public"); g != "github.com/example/app/gen/proto/yagish_data/v1" {
+		t.Fatalf("go_package: %q", g)
+	}
+	cfg.Proto.GoPackagePrefix = "github.com/example/app/gen/proto/yagish_data/v1"
+	if g := cfg.GoPackage("public"); g != "github.com/example/app/gen/proto/yagish_data/v1" {
+		t.Fatalf("go_package already suffixed: %q", g)
 	}
 }
 
-func TestLoadProtoSchemas(t *testing.T) {
+func TestValidatePackage(t *testing.T) {
+	if err := config.ValidatePackage("db.v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ValidatePackage("yagish_data.v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ValidatePackage("yagish_data.v1beta1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.ValidatePackage("yagish_data.v1.public"); err == nil {
+		t.Fatal("schema after version should fail")
+	}
+	if err := config.ValidatePackage("Yagish.v1"); err == nil {
+		t.Fatal("uppercase should fail")
+	}
+	cfg := config.Defaults()
+	cfg.Proto.Schemas["public"] = "yagish"
+	if err := cfg.ValidateProto(); err == nil {
+		t.Fatal("alias without version should fail")
+	}
+}
+
+func TestLoadProtoOut(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".pg2proto.yaml")
-	if err := os.WriteFile(p, []byte("proto:\n  schemas:\n    public: yagish\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("proto:\n  out: ./gen/proto\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := config.Load(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.OutputSchema("public") != "yagish" {
-		t.Fatalf("loaded alias: %q", cfg.OutputSchema("public"))
+	if cfg.Proto.Out != "./gen/proto" {
+		t.Fatalf("out %q", cfg.Proto.Out)
+	}
+}
+
+func TestLoadProtoSchemas(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(p, []byte("proto:\n  schemas:\n    public: yagish_data.v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OutputPackage("public") != "yagish_data.v1" {
+		t.Fatalf("loaded package: %q", cfg.OutputPackage("public"))
 	}
 }
 

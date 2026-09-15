@@ -59,7 +59,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 	bindGen := func(cmd *cobra.Command) {
 		cmd.Flags().StringVarP(&conn, "conn", "c", "", "PostgreSQL connection string (default $DATABASE_URL)")
 		cmd.Flags().StringSliceVarP(&schemas, "schema", "s", []string{"public"}, "target schema(s)")
-		cmd.Flags().StringVarP(&out, "out", "o", "./proto", "output directory for .proto files")
+		cmd.Flags().StringVarP(&out, "out", "o", "./proto", "output directory for .proto files (overrides yaml proto.out)")
 		cmd.Flags().StringVar(&cfgPath, "config", ".pg2proto.yaml", "config file")
 		cmd.Flags().StringVar(&lockFile, "lock-file", ".pg2proto.lock", "lock file")
 		cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "exclude glob for relations and enums (added to yaml exclude)")
@@ -74,6 +74,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 				Conn:           conn,
 				Schemas:        schemas,
 				Out:            out,
+				OutSet:         cmd.Flags().Changed("out"),
 				Config:         cfgPath,
 				LockFile:       lockFile,
 				DryRun:         dryRun,
@@ -120,6 +121,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 				Conn:           conn,
 				Schemas:        schemas,
 				Out:            out,
+				OutSet:         cmd.Flags().Changed("out"),
 				Config:         cfgPath,
 				LockFile:       lockFile,
 				Exclude:        exclude,

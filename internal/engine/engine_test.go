@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestGenerateGolden(t *testing.T) {
 	yaml := `version: "1"
 proto:
   package_prefix: "db.v1"
-  go_package_prefix: "github.com/example/app/gen/proto/db/v1"
+  go_package_prefix: "github.com/example/app/gen/proto"
 options:
   jsonb_as_struct: false
   validate: true
@@ -83,7 +84,19 @@ overrides:
 	if len(res.Breaking) != 0 {
 		t.Fatal(res.Breaking)
 	}
-	users := res.Files["public/users.proto"]
+	users := res.Files["db/v1/users.proto"]
+	if users == "" {
+		t.Fatalf("files: %v", keys(res.Files))
+	}
+	if !strings.Contains(users, "package db.v1;") {
+		t.Fatalf("package:\n%s", users)
+	}
+	if !strings.Contains(users, `option go_package = "github.com/example/app/gen/proto/db/v1";`) {
+		t.Fatalf("go_package:\n%s", users)
+	}
+	if !strings.Contains(users, `import "db/v1/order_status.proto"`) {
+		t.Fatalf("enum import:\n%s", users)
+	}
 	if !strings.Contains(users, "message Users {") {
 		t.Fatalf("users proto:\n%s", users)
 	}
@@ -111,7 +124,7 @@ overrides:
 	if strings.Contains(users, "gt = 0") {
 		t.Fatal("must not auto-add gt=0")
 	}
-	st := res.Files["public/order_status.proto"]
+	st := res.Files["db/v1/order_status.proto"]
 	if !strings.Contains(st, "ORDER_STATUS_UNSPECIFIED = 0") {
 		t.Fatalf("enum:\n%s", st)
 	}
@@ -126,9 +139,9 @@ func TestSchemaAliasRewritesPackageAndDir(t *testing.T) {
 	yaml := `version: "1"
 proto:
   package_prefix: "yagish_data.v1"
-  go_package_prefix: "github.com/example/app/gen/proto/yagish_data/v1"
+  go_package_prefix: "github.com/example/app/gen/proto"
   schemas:
-    public: yagish
+    public: yagish_data.v1
 `
 	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -147,22 +160,22 @@ proto:
 	if _, ok := res.Files["public/users.proto"]; ok {
 		t.Fatal("PG schema directory should not be used")
 	}
-	users := res.Files["yagish/users.proto"]
+	users := res.Files["yagish_data/v1/users.proto"]
 	if users == "" {
 		t.Fatalf("files: %v", keys(res.Files))
 	}
 	for _, want := range []string{
-		"package yagish_data.v1.yagish;",
-		`option go_package = "github.com/example/app/gen/proto/yagish_data/v1/yagish";`,
-		`import "yagish/order_status.proto";`,
+		"package yagish_data.v1;",
+		`option go_package = "github.com/example/app/gen/proto/yagish_data/v1";`,
+		`import "yagish_data/v1/order_status.proto";`,
 		"OrderStatus status",
 	} {
 		if !strings.Contains(users, want) {
 			t.Fatalf("missing %q in\n%s", want, users)
 		}
 	}
-	if _, ok := res.Files["yagish/order_status.proto"]; !ok {
-		t.Fatal("enum should be under the aliased directory")
+	if _, ok := res.Files["yagish_data/v1/order_status.proto"]; !ok {
+		t.Fatal("enum should be under the package directory")
 	}
 	if _, ok := res.Lock.Messages["public.users"]; !ok {
 		t.Fatal("lock keys should keep the PostgreSQL schema")
@@ -175,6 +188,77 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestYAMLOutDirectory(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "gen", "proto")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	yaml := "version: \"1\"\nproto:\n  package_prefix: \"db.v1\"\n  out: " + strconv.Quote(out) + "\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != out {
+		t.Fatalf("resolved out %q want %q", res.Out, out)
+	}
+	if err := engine.Write(opt, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "db", "v1", "users.proto")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFlagOutOverridesYAML(t *testing.T) {
+	dir := t.TempDir()
+	yamlOut := filepath.Join(dir, "from-yaml")
+	flagOut := filepath.Join(dir, "from-flag")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  out: "+strconv.Quote(yamlOut)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      flagOut,
+		OutSet:   true,
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != flagOut {
+		t.Fatalf("flag should win: %q", res.Out)
+	}
+}
+
+func TestInvalidPackageRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  package_prefix: yagish_data.v1.public\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := engine.Run(context.Background(), engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	})
+	if err == nil {
+		t.Fatal("expected package version suffix error")
+	}
 }
 
 func TestExcludeEnumFallsBackToString(t *testing.T) {
@@ -200,11 +284,14 @@ tables:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := res.Files["public/order_status.proto"]; ok {
+	if _, ok := res.Files["db/v1/order_status.proto"]; ok {
 		t.Fatal("excluded enum proto should not be generated")
 	}
-	users := res.Files["public/users.proto"]
-	if strings.Contains(users, "import \"public/order_status.proto\"") {
+	users := res.Files["db/v1/users.proto"]
+	if users == "" {
+		t.Fatalf("files: %v", keys(res.Files))
+	}
+	if strings.Contains(users, "import \"db/v1/order_status.proto\"") {
 		t.Fatalf("users should not import excluded enum:\n%s", users)
 	}
 	if !strings.Contains(users, "string status") {

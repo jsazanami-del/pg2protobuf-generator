@@ -121,7 +121,34 @@ func Apply(snap *catalog.Snapshot, cfg *config.Config, resolver TypeResolver, lo
 		mr.Fields = append(mr.Fields, extras...)
 		out.Relations = append(out.Relations, mr)
 	}
+	if err := detectOutputCollisions(out, cfg); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func detectOutputCollisions(out *Schema, cfg *config.Config) error {
+	rels := map[string]string{}
+	enums := map[string]string{}
+	add := func(seen map[string]string, pgSchema, name, key string) error {
+		path := cfg.OutputFile(pgSchema, name)
+		if prev, ok := seen[path]; ok && prev != key {
+			return fmt.Errorf("output file %s collides (%s and %s); map schemas to different proto packages", path, prev, key)
+		}
+		seen[path] = key
+		return nil
+	}
+	for _, rel := range out.Relations {
+		if err := add(rels, rel.Schema, rel.Name, rel.Key()); err != nil {
+			return err
+		}
+	}
+	for _, en := range out.Enums {
+		if err := add(enums, en.Schema, en.Name, en.Key()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func mapColumn(
@@ -199,7 +226,7 @@ func mapEnumType(e catalog.Enum, cfg *config.Config) mappedType {
 	return mappedType{
 		ProtoType: naming.PascalCase(e.Name),
 		PGType:    e.Name,
-		Imports:   []string{cfg.OutputSchema(e.Schema) + "/" + e.Name + ".proto"},
+		Imports:   []string{cfg.OutputFile(e.Schema, e.Name)},
 	}
 }
 

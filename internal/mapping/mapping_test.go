@@ -244,7 +244,7 @@ func TestExtraOptionalAndRepeatedRejected(t *testing.T) {
 
 func TestEnumImportUsesOutputSchema(t *testing.T) {
 	cfg := config.Defaults()
-	cfg.Proto.Schemas["public"] = "yagish"
+	cfg.Proto.Schemas["public"] = "yagish_data.v1"
 	snap := &catalog.Snapshot{
 		Enums: []catalog.Enum{{Schema: "public", Name: "order_status", OID: 99901, Labels: []string{"pending"}}},
 		Relations: []catalog.Relation{{
@@ -261,7 +261,7 @@ func TestEnumImportUsesOutputSchema(t *testing.T) {
 	if f.ProtoType != "OrderStatus" {
 		t.Fatalf("type %s", f.ProtoType)
 	}
-	if !contains(f.Imports, "yagish/order_status.proto") {
+	if !contains(f.Imports, "yagish_data/v1/order_status.proto") {
 		t.Fatalf("imports %v", f.Imports)
 	}
 	if contains(f.Imports, "public/order_status.proto") {
@@ -310,7 +310,7 @@ func TestExcludedEnumMapsToString(t *testing.T) {
 		t.Fatalf("excluded enum array should not import proto: %v", byName["history"].Imports)
 	}
 	assertField(t, byName["roles"], "UserRole", true, false, nil)
-	if !contains(byName["roles"].Imports, "public/user_role.proto") {
+	if !contains(byName["roles"].Imports, "db/v1/user_role.proto") {
 		t.Fatalf("kept enum should import proto: %v", byName["roles"].Imports)
 	}
 }
@@ -351,6 +351,27 @@ func TestExcludedEnumOverrideStillWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertField(t, got.Relations[0].Fields[0], "bytes", false, false, nil)
+}
+
+func TestOutputFileCollision(t *testing.T) {
+	cfg := config.Defaults()
+	snap := &catalog.Snapshot{
+		Relations: []catalog.Relation{
+			{Schema: "public", Name: "users", Columns: []catalog.Column{{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true}}},
+			{Schema: "app", Name: "users", Columns: []catalog.Column{{Name: "id", TypeOID: pgtype.Int8OID, TypeName: "int8", NotNull: true}}},
+		},
+	}
+	if _, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil); err == nil {
+		t.Fatal("expected collision")
+	}
+	cfg.Proto.Schemas["app"] = "app.v1"
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Relations) != 2 {
+		t.Fatalf("relations: %d", len(got.Relations))
+	}
 }
 
 func intPtr(n int) *int { return &n }

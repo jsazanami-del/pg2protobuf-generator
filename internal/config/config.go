@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	pathpkg "path"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// last proto package component must be a version (buf PACKAGE_VERSION_SUFFIX).
+var packageVersionSuffix = regexp.MustCompile(`(?:^|\.)v(?:0|[1-9]\d*)(?:(?:alpha|beta|test|unstable)\d+)?$`)
 
 const Version = "1"
 
@@ -26,6 +30,7 @@ type Config struct {
 type Proto struct {
 	PackagePrefix   string            `yaml:"package_prefix"`
 	GoPackagePrefix string            `yaml:"go_package_prefix"`
+	Out             string            `yaml:"out"`
 	Schemas         map[string]string `yaml:"schemas"`
 }
 
@@ -88,8 +93,9 @@ func Defaults() *Config {
 	return &Config{
 		Version: Version,
 		Proto: Proto{
-			PackagePrefix: "db.v1",
-			Schemas:       map[string]string{},
+			PackagePrefix:   "db.v1",
+			GoPackagePrefix: "",
+			Schemas:         map[string]string{},
 		},
 		Options: Options{
 			Validate: true,
@@ -142,12 +148,82 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// OutputSchema is the directory / package suffix for a PostgreSQL schema.
-func (c *Config) OutputSchema(pgSchema string) string {
-	if alias := c.Proto.Schemas[pgSchema]; alias != "" {
-		return alias
+// OutputPackage is the proto package for a PostgreSQL schema (buf PACKAGE_VERSION_SUFFIX).
+func (c *Config) OutputPackage(pgSchema string) string {
+	if pkg := c.Proto.Schemas[pgSchema]; pkg != "" {
+		return pkg
 	}
-	return pgSchema
+	return c.Proto.PackagePrefix
+}
+
+// PackageDir is the directory matching a proto package (buf PACKAGE_DIRECTORY_MATCH).
+func PackageDir(pkg string) string {
+	return strings.ReplaceAll(strings.Trim(pkg, "."), ".", "/")
+}
+
+// OutputFile is the path of a generated proto relative to proto.out.
+func (c *Config) OutputFile(pgSchema, name string) string {
+	dir := PackageDir(c.OutputPackage(pgSchema))
+	if dir == "" {
+		return name + ".proto"
+	}
+	return dir + "/" + name + ".proto"
+}
+
+// GoPackage is option go_package for a PostgreSQL schema.
+// go_package_prefix is the parent of the package path, unless it already ends with it.
+func (c *Config) GoPackage(pgSchema string) string {
+	prefix := strings.Trim(c.Proto.GoPackagePrefix, "/")
+	if prefix == "" {
+		return ""
+	}
+	dir := PackageDir(c.OutputPackage(pgSchema))
+	if dir == "" || prefix == dir || strings.HasSuffix(prefix, "/"+dir) {
+		return prefix
+	}
+	return prefix + "/" + dir
+}
+
+// ValidateProto reports whether package names satisfy buf STANDARD layout rules.
+func (c *Config) ValidateProto() error {
+	pkgs := map[string]struct{}{}
+	if c.Proto.PackagePrefix != "" {
+		pkgs[c.Proto.PackagePrefix] = struct{}{}
+	}
+	for _, pkg := range c.Proto.Schemas {
+		if pkg == "" {
+			continue
+		}
+		pkgs[pkg] = struct{}{}
+	}
+	if len(pkgs) == 0 {
+		return fmt.Errorf("proto.package_prefix is required")
+	}
+	for pkg := range pkgs {
+		if err := ValidatePackage(pkg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidatePackage reports whether pkg is a buf-lint-compatible proto package.
+func ValidatePackage(pkg string) error {
+	if pkg == "" {
+		return fmt.Errorf("proto package is empty")
+	}
+	if strings.Contains(pkg, "..") || strings.HasPrefix(pkg, ".") || strings.HasSuffix(pkg, ".") {
+		return fmt.Errorf("proto package %q is invalid", pkg)
+	}
+	for _, part := range strings.Split(pkg, ".") {
+		if part == "" || part != strings.ToLower(part) {
+			return fmt.Errorf("proto package %q must be lower_snake_case (buf PACKAGE_LOWER_SNAKE_CASE)", pkg)
+		}
+	}
+	if !packageVersionSuffix.MatchString(pkg) {
+		return fmt.Errorf("proto package %q must end with a version such as v1 (buf PACKAGE_VERSION_SUFFIX)", pkg)
+	}
+	return nil
 }
 
 // MatchGlob reports whether any name matches any path.Match pattern.
@@ -210,9 +286,10 @@ func InitTemplate() string {
 version: "1"
 
 proto:
-  package_prefix: "db.v1"
-  go_package_prefix: "github.com/example/app/gen/proto/db/v1"
-  schemas: {}  # PG schema -> 出力ディレクトリ / package 末尾（例: public: yagish）
+  package_prefix: "db.v1"  # package と {out}/{package}/ のパス。末尾は v1 など（buf lint）
+  go_package_prefix: "github.com/example/app/gen/proto"
+  out: "./proto"  # buf module root。--out より低い
+  schemas: {}  # PG schema -> 別 proto package（例: public: yagish_data.v1）
 
 options:
   jsonb_as_struct: false
