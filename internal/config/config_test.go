@@ -65,6 +65,36 @@ messages:
 	}
 }
 
+func TestExcludesObjectAndSelectsRelation(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Tables.Exclude = []string{"_*", "order_status", "app.hidden"}
+	if !cfg.ExcludesObject("public", "order_status") {
+		t.Fatal("unqualified exclude should match enum/relation name")
+	}
+	if !cfg.ExcludesObject("app", "hidden") {
+		t.Fatal("qualified exclude should match schema.name")
+	}
+	if cfg.ExcludesObject("public", "users") {
+		t.Fatal("users should remain")
+	}
+	if !cfg.ExcludesObject("public", "_tmp") {
+		t.Fatal("_* should match _tmp")
+	}
+	if !cfg.SelectsRelation("public", "users") {
+		t.Fatal("users should be selected")
+	}
+	if cfg.SelectsRelation("public", "_tmp") {
+		t.Fatal("_tmp should be excluded")
+	}
+	cfg.Tables.Include = []string{"users"}
+	if !cfg.SelectsRelation("public", "users") {
+		t.Fatal("include should keep users")
+	}
+	if cfg.SelectsRelation("public", "orders") {
+		t.Fatal("include should drop unmatched relations")
+	}
+}
+
 func TestWriteFileRefusesOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".pg2proto.yaml")

@@ -176,6 +176,10 @@ func Assign(old *File, mapped *mapping.Schema, cfg *config.Config) *Result {
 	}
 	for key := range old.Enums {
 		if _, ok := currentEnum[key]; !ok {
+			if excludedEnum(key, cfg) {
+				breaking = append(breaking, fmt.Sprintf("enum %s is excluded (use --force to drop it from the lock; --prune to delete generated files)", key))
+				continue
+			}
 			next.Enums[key] = cloneEnum(old.Enums[key])
 			breaking = append(breaking, fmt.Sprintf("enum %s is missing from the database (use --prune to drop generated files)", key))
 		}
@@ -495,6 +499,14 @@ func buildIR(mapped *mapping.Schema, lk *File, cfg *config.Config) *IR {
 		ir.Files = append(ir.Files, filesByPath[p])
 	}
 	return ir
+}
+
+func excludedEnum(key string, cfg *config.Config) bool {
+	schema, name, ok := strings.Cut(key, ".")
+	if !ok {
+		return cfg.ExcludesObject("", key)
+	}
+	return cfg.ExcludesObject(schema, name)
 }
 
 func protoReservedNames(labels []string, enumPascal string) []string {

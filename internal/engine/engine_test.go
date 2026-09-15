@@ -120,6 +120,85 @@ overrides:
 	}
 }
 
+func TestExcludeEnumFallsBackToString(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	yaml := `version: "1"
+proto:
+  package_prefix: "db.v1"
+tables:
+  exclude: ["order_status"]
+`
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      filepath.Join(dir, "proto"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res.Files["public/order_status.proto"]; ok {
+		t.Fatal("excluded enum proto should not be generated")
+	}
+	users := res.Files["public/users.proto"]
+	if strings.Contains(users, "import \"public/order_status.proto\"") {
+		t.Fatalf("users should not import excluded enum:\n%s", users)
+	}
+	if !strings.Contains(users, "string status") {
+		t.Fatalf("excluded enum column should be string:\n%s", users)
+	}
+	if strings.Contains(users, "OrderStatus") {
+		t.Fatalf("users should not reference OrderStatus:\n%s", users)
+	}
+}
+
+func TestExcludeEnumFlagAndLockTransition(t *testing.T) {
+	dir := t.TempDir()
+	opt := engine.Options{
+		Config:   filepath.Join(dir, "missing.yaml"),
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      filepath.Join(dir, "proto"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Write(opt, res); err != nil {
+		t.Fatal(err)
+	}
+
+	opt.Exclude = []string{"order_status"}
+	res2, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res2.Breaking) == 0 {
+		t.Fatal("first exclude of a locked enum should be breaking")
+	}
+	if _, ok := res2.Lock.Enums["public.order_status"]; ok {
+		t.Fatal("excluded enum should be dropped from the next lock")
+	}
+	if err := engine.Write(opt, res2); err != nil {
+		t.Fatal(err)
+	}
+
+	res3, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res3.Breaking) != 0 {
+		t.Fatalf("second pass should be compatible: %v", res3.Breaking)
+	}
+}
+
 func TestCheckIncompatible(t *testing.T) {
 	dir := t.TempDir()
 	opt := engine.Options{

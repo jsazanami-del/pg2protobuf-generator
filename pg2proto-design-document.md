@@ -63,7 +63,7 @@ pg2proto [subcommand] [flags]
 | `--dry-run` | | `false` | `.proto` も lock も書かない。preview を stdout へ |
 | `--force` | | `false` | 非互換があっても lock を更新する（`reserved` は維持する） |
 | `--prune` | | `false` | DB から消えた relation / enum の生成ファイルを削除する。無い場合は stale を残し、`check` は fail |
-| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算） |
+| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算。relation と ENUM に適用） |
 | `--strict-types` | | `false` | 未知型・composite / `record` でエラーにする。既定は `google.protobuf.Any`（yaml `options.strict_types` より優先） |
 
 非互換な変更があるとき、`--force` 無しの `generate` は終了コード `1` で失敗し、ファイルを更新しない。
@@ -79,6 +79,7 @@ fail 条件:
 - 非互換な `proto_type` 変更（例: `int32` → `string`、`string` → カスタム message）
 - カラム / enum ラベルのリネームが yaml / lock の `renames` で未宣言
 - 対象だった relation / enum の削除（`--prune` 前の状態）
+- 既存 lock にある ENUM を `exclude` したことによる proto enum 削除、および参照列の `enum` → `string`
 
 互換な追加（新カラムに新番号、新 enum ラベルに `max+1`）は OK。
 
@@ -124,7 +125,7 @@ atttypid (OID)
 | （`relispartition`） | パーティション子 | 除外 |
 | `S` / `c` など | シーケンス / composite type | 除外 |
 
-対象 ENUM: 選択スキーマ内の `pg_type.typtype = 'e'`。カラムからの参照有無を問わず出す。
+対象 ENUM: 選択スキーマ内の `pg_type.typtype = 'e'`。カラムからの参照有無を問わず出す。`tables.exclude` / `--exclude` にマッチした ENUM は proto を出さず、参照列は `string`（配列は `repeated string`）にする。
 
 除外する列:
 
@@ -235,7 +236,9 @@ var id pgtype.Int4
 
 ### 3.6 PG ENUM → proto enum
 
-pgx は ENUM を主に string としてスキャンする。proto は共有語彙なので **`enum` にする**（デフォルトで string に落とさない）。override で特定 ENUM を `string` にすることは可。
+pgx は ENUM を主に string としてスキャンする。proto は共有語彙なので **`enum` にする**（デフォルトで string に落とさない）。`tables.exclude` / `--exclude` で除外した ENUM、および override で `string` にした ENUM は string に落とす。
+
+すでに lock にある ENUM を除外すると、ENUM proto の削除と参照列の型変更は非互換になる。`generate --force --prune` で lock から落とし、生成ファイルを消す。以降の `check` は再検出しない。
 
 - ラベル一覧は `pg_enum.enumlabel`
 - **値番号に `enumsortorder` を使わない**（`ADD VALUE ... BEFORE` で順序が変わってもワイヤ番号は不変）
@@ -318,6 +321,7 @@ enums:
 - **型・カラム override**: `proto_type` / `import` / validate（protovalidate と 1:1）
 - **omit**: カタログ列を生成しない。glob は `column` / `relation.column` / `schema.relation.column`
 - **extra**: カタログに無いフィールドを足す。`fields.extra` は全 message、`messages.<schema.relation>.extra` は当該 message。番号は lock が振る
+- **exclude**: `tables.exclude` / `--exclude` は relation と ENUM に適用。除外 ENUM の参照列は `string`
 
 できないこと:
 
@@ -361,7 +365,7 @@ options:
 
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
-  exclude: ["_*"]         # glob（schema.relation または relation）
+  exclude: ["_*"]         # glob。relation / enum の schema.name または name
 
 fields:
   omit: ["password", "*_hash"]

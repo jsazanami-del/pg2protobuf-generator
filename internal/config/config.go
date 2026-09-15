@@ -153,6 +153,20 @@ func MatchGlob(patterns []string, names ...string) bool {
 	return false
 }
 
+// ExcludesObject reports whether schema.name or name matches tables.exclude.
+func (c *Config) ExcludesObject(schema, name string) bool {
+	return MatchGlob(c.Tables.Exclude, schema+"."+name, name)
+}
+
+// SelectsRelation reports whether a table/view/matview is in the generation set.
+func (c *Config) SelectsRelation(schema, name string) bool {
+	key := schema + "." + name
+	if len(c.Tables.Include) > 0 && !MatchGlob(c.Tables.Include, key, name) {
+		return false
+	}
+	return !c.ExcludesObject(schema, name)
+}
+
 // OmitsColumn reports whether a catalog column is excluded from generated messages.
 func (c *Config) OmitsColumn(schema, relation, column string) bool {
 	names := []string{
@@ -193,7 +207,7 @@ options:
 
 tables:
   include: []
-  exclude: ["_*"]
+  exclude: ["_*"]  # glob。relation / enum の schema.name または name
 
 fields:
   omit: []    # glob。column / relation.column / schema.relation.column

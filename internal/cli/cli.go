@@ -62,7 +62,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 		cmd.Flags().StringVarP(&out, "out", "o", "./proto", "output directory for .proto files")
 		cmd.Flags().StringVar(&cfgPath, "config", ".pg2proto.yaml", "config file")
 		cmd.Flags().StringVar(&lockFile, "lock-file", ".pg2proto.lock", "lock file")
-		cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "exclude glob (added to yaml exclude)")
+		cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "exclude glob for relations and enums (added to yaml exclude)")
 		cmd.Flags().BoolVar(&strictTypes, "strict-types", false, "error on unknown and composite types instead of google.protobuf.Any")
 	}
 

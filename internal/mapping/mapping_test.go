@@ -242,6 +242,90 @@ func TestExtraOptionalAndRepeatedRejected(t *testing.T) {
 	}
 }
 
+func TestExcludedEnumMapsToString(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Tables.Exclude = []string{"order_status"}
+	snap := &catalog.Snapshot{
+		Enums: []catalog.Enum{
+			{Schema: "public", Name: "order_status", OID: 99901, Labels: []string{"pending"}},
+			{Schema: "public", Name: "user_role", OID: 99902, Labels: []string{"admin"}},
+		},
+		Relations: []catalog.Relation{{
+			Schema: "public",
+			Name:   "users",
+			Columns: []catalog.Column{
+				{Name: "status", TypeOID: 99901, TypeName: "order_status", TypeType: 'e', TypeSchema: "public", NotNull: true},
+				{Name: "roles", TypeOID: 99911, TypeName: "_user_role", TypeType: 'a', ElemOID: 99902, ElemName: "user_role", ElemType: 'e', ElemSchema: "public"},
+				{Name: "history", TypeOID: 99912, TypeName: "_order_status", TypeType: 'a', ElemOID: 99901, ElemName: "order_status", ElemType: 'e', ElemSchema: "public"},
+			},
+		}},
+	}
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Enums) != 1 || got.Enums[0].Name != "user_role" {
+		t.Fatalf("enums: %+v", got.Enums)
+	}
+	byName := map[string]mapping.Field{}
+	for _, f := range got.Relations[0].Fields {
+		byName[f.Column] = f
+	}
+	assertField(t, byName["status"], "string", false, false, nil)
+	if byName["status"].PGType != "order_status" {
+		t.Fatalf("status pg type: %s", byName["status"].PGType)
+	}
+	if contains(byName["status"].Imports, "public/order_status.proto") {
+		t.Fatalf("excluded enum should not import proto: %v", byName["status"].Imports)
+	}
+	assertField(t, byName["history"], "string", true, false, nil)
+	if contains(byName["history"].Imports, "public/order_status.proto") {
+		t.Fatalf("excluded enum array should not import proto: %v", byName["history"].Imports)
+	}
+	assertField(t, byName["roles"], "UserRole", true, false, nil)
+	if !contains(byName["roles"].Imports, "public/user_role.proto") {
+		t.Fatalf("kept enum should import proto: %v", byName["roles"].Imports)
+	}
+}
+
+func TestExcludedEnumQualifiedAndGlob(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Tables.Exclude = []string{"app.*", "public.legacy_*"}
+	snap := &catalog.Snapshot{
+		Enums: []catalog.Enum{
+			{Schema: "app", Name: "color", OID: 1, Labels: []string{"red"}},
+			{Schema: "public", Name: "legacy_status", OID: 2, Labels: []string{"old"}},
+			{Schema: "public", Name: "order_status", OID: 3, Labels: []string{"ok"}},
+		},
+	}
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Enums) != 1 || got.Enums[0].Key() != "public.order_status" {
+		t.Fatalf("enums: %+v", got.Enums)
+	}
+}
+
+func TestExcludedEnumOverrideStillWins(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Tables.Exclude = []string{"order_status"}
+	cfg.Overrides.Columns["public.users.status"] = config.Override{ProtoType: "bytes"}
+	snap := &catalog.Snapshot{
+		Enums: []catalog.Enum{{Schema: "public", Name: "order_status", OID: 99901, Labels: []string{"pending"}}},
+		Relations: []catalog.Relation{{
+			Schema:  "public",
+			Name:    "users",
+			Columns: []catalog.Column{{Name: "status", TypeOID: 99901, TypeName: "order_status", TypeType: 'e', TypeSchema: "public", NotNull: true}},
+		}},
+	}
+	got, err := mapping.Apply(snap, cfg, pgtype.NewMap(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertField(t, got.Relations[0].Fields[0], "bytes", false, false, nil)
+}
+
 func intPtr(n int) *int { return &n }
 
 func assertField(t *testing.T, f mapping.Field, proto string, repeated, optional bool, _ []string) {

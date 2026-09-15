@@ -179,26 +179,11 @@ func prune(out string, keep map[string]string) error {
 func filterSnapshot(snap *catalog.Snapshot, cfg *config.Config) {
 	var rels []catalog.Relation
 	for _, r := range snap.Relations {
-		if match(r.Schema, r.Name, cfg.Tables.Include, cfg.Tables.Exclude) {
+		if cfg.SelectsRelation(r.Schema, r.Name) {
 			rels = append(rels, r)
 		}
 	}
 	snap.Relations = rels
-}
-
-func match(schema, name string, include, exclude []string) bool {
-	key := schema + "." + name
-	if len(include) > 0 && !anyGlob(include, key, name) {
-		return false
-	}
-	if anyGlob(exclude, key, name) {
-		return false
-	}
-	return true
-}
-
-func anyGlob(patterns []string, names ...string) bool {
-	return config.MatchGlob(patterns, names...)
 }
 
 func sortedKeys(m map[string]string) []string {

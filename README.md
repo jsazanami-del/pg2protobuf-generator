@@ -62,7 +62,7 @@ pg2proto check
 | `--dry-run` | | `false` | ファイルを書かず stdout に出す（`generate` のみ） |
 | `--force` | | `false` | 非互換でも lock を更新する（`generate` のみ。`reserved` は維持） |
 | `--prune` | | `false` | 消えた relation / enum の生成 proto を削除（`generate` のみ） |
-| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算） |
+| `--exclude` | | （なし） | 除外 glob（yaml の exclude に加算。relation と ENUM に適用） |
 | `--strict-types` | | `false` | 未知型・composite でエラー。既定は `google.protobuf.Any` |
 
 ```bash
@@ -98,7 +98,7 @@ options:
 
 tables:
   include: []             # 空なら対象スキーマの全 table/view/matview
-  exclude: ["_*"]         # glob。schema.relation または relation にマッチ
+  exclude: ["_*"]         # glob。relation / enum の schema.name または name にマッチ
 
 fields:
   omit: ["password", "*_hash"]   # glob。column / relation.column / schema.relation.column
@@ -149,7 +149,7 @@ overrides:
 | `options.jsonb_as_struct` | json/jsonb を Struct にする |
 | `options.validate` | uuid / varchar `max_len` / date pattern などの自動アノテーション |
 | `options.strict_types` | 未知型をエラーにする。`false` なら `google.protobuf.Any` |
-| `tables.include` / `exclude` | 対象 relation の glob。include が空なら全件 |
+| `tables.include` / `exclude` | 対象 relation の glob。include が空なら全件。`exclude` は ENUM にも適用し、除外した ENUM を参照する列は `string`（配列は `repeated string`）になる |
 | `fields.omit` | 生成しない列の glob（`column` / `relation.column` / `schema.relation.column`） |
 | `fields.extra` | 全 message に足すフィールド。番号は lock が振る |
 | `messages` | `schema.relation` 単位の omit / extra。グローバルに加算 |
@@ -171,11 +171,13 @@ extra のキー: `name`（lock のキー兼 proto 名）、`proto_type`、`optio
 
 omit した列の番号は lock の `reserved` に残る。omit と extra を同時にしても未宣言リネームにはしない。
 
+すでに lock にある ENUM を `exclude` すると、ENUM proto の削除と参照列の `enum` → `string` が非互換になる。`generate --force --prune` で lock から落とし、生成ファイルを消す。以降の `check` は再検出しない。
+
 テンプレ全体の上書きはできません。
 
 ## 注意
 
-- 対象は `relkind` が table / view / matview のものと、対象スキーマ内の ENUM です。外部テーブル（FDW）とパーティション親・子は出しません。
+- 対象は `relkind` が table / view / matview のものと、対象スキーマ内の ENUM です。`tables.exclude` / `--exclude` は両方に効きます。外部テーブル（FDW）とパーティション親・子は出しません。
 - `import "buf/validate/validate.proto"` は出しますが、`buf.yaml` の deps は自分で用意してください。このツールは `buf generate` を呼びません。
 - 未知の PostgreSQL 型と composite は、既定で `google.protobuf.Any` になります。写像漏れをエラーにしたいときは `--strict-types` または `options.strict_types: true` を使います。
 
