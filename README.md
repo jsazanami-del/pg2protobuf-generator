@@ -204,4 +204,8 @@ golangci-lint run
 ```
 
 設定は [`.golangci.yml`](.golangci.yml) です。CI は push / pull request で `golangci-lint` と `go test -race ./...` を回します。
+
+## ライセンス
+
+[Apache License 2.0](LICENSE) です。
 )
