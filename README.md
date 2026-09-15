@@ -46,9 +46,11 @@ pg2proto check
 
 生成物:
 
-- `{out}/{package}/{relation}.proto`（既定 package は `db.v1` → `{out}/db/v1/users.proto`）
-- `{out}/{package}/{enum_type}.proto`
+- `{module}/{package}/{relation}.proto`（既定 package は `db.v1` → `proto/db/v1/users.proto`）
+- `{module}/{package}/{enum_type}.proto`
 - `.pg2proto.lock`
+
+出力ルートは最寄りの `buf.yaml`（v2）の module path です。`buf.yaml` が無いときだけ `proto.out` / `--out`（既定 `./proto`）にフォールバックします。
 
 ### `generate` / `check` のフラグ
 
@@ -56,7 +58,8 @@ pg2proto check
 | :--- | :--- | :--- | :--- |
 | `--conn` | `-c` | `$DATABASE_URL` | PostgreSQL 接続文字列 |
 | `--schema` | `-s` | `public` | 対象スキーマ（複数可） |
-| `--out` | `-o` | `./proto` | `.proto` の出力先（yaml の `proto.out` より優先） |
+| `--out` | `-o` | `./proto` | `buf.yaml` が無いときの出力先（yaml の `proto.out` より優先） |
+| `--module` | | （なし） | `buf.yaml` の `modules[].path`。yaml の `proto.module` より優先 |
 | `--config` | | `.pg2proto.yaml` | 設定ファイル |
 | `--lock-file` | | `.pg2proto.lock` | lock ファイル |
 | `--dry-run` | | `false` | ファイルを書かず stdout に出す（`generate` のみ） |
@@ -66,7 +69,8 @@ pg2proto check
 | `--strict-types` | | `false` | 未知型・composite でエラー。既定は `google.protobuf.Any` |
 
 ```bash
-pg2proto generate -c "$DATABASE_URL" -s public -s app -o ./proto
+pg2proto generate -c "$DATABASE_URL" -s public -s app
+pg2proto generate --module proto
 pg2proto generate --dry-run
 pg2proto generate --strict-types
 pg2proto check
@@ -90,7 +94,8 @@ version: "1"
 proto:
   package_prefix: "db.v1"
   go_package_prefix: "github.com/example/app/gen/proto"
-  out: "./proto"
+  module: proto             # buf.yaml の modules[].path。複数 module のとき必須
+  out: "./proto"            # buf.yaml が無いときだけ使う
   schemas:
     public: yagish_data.v1   # PG schema を別 proto package にするとき
 
@@ -147,9 +152,10 @@ overrides:
 
 | キー | 内容 |
 | :--- | :--- |
-| `proto.package_prefix` | proto package。末尾は `v1` など（buf `PACKAGE_VERSION_SUFFIX`）。ファイルは `{out}/{package}/` |
+| `proto.package_prefix` | proto package。末尾は `v1` など（buf `PACKAGE_VERSION_SUFFIX`）。ファイルは `{module}/{package}/` |
 | `proto.go_package_prefix` | `option go_package` の親。`{prefix}/{package}` になる（すでに package パスで終わっていればそのまま） |
-| `proto.out` | buf module root。未指定なら `./proto`。`--out` があればフラグが優先 |
+| `proto.module` | 対象 buf module の `path`。`buf.yaml` に module が1件なら省略可。`--module` があればフラグが優先 |
+| `proto.out` | `buf.yaml` が無いときの出力先。未指定なら `./proto`。`--out` があればフラグが優先 |
 | `proto.schemas` | PG スキーマ → 別 proto package。省略時は `package_prefix`。lock / yaml キーは PG 名のまま |
 | `options.jsonb_as_struct` | json/jsonb を Struct にする |
 | `options.validate` | uuid / varchar `max_len` / date pattern などの自動アノテーション |
@@ -174,12 +180,14 @@ validate の yaml キーと生成物の対応:
 
 extra のキー: `name`（lock のキー兼 proto 名）、`proto_type`、`optional` / `repeated`（排他）、`import`、`validate`、`comment`。番号は YAML に書かない。`google.protobuf.*` は import 省略可。それ以外のカスタム型は `import` 必須。カタログ列と同名の extra はエラー（型の差し替えは `overrides.columns`）。
 
-配置は buf STANDARD（`PACKAGE_DIRECTORY_MATCH` / `PACKAGE_VERSION_SUFFIX`）に合わせます。`package yagish_data.v1` ならファイルは `{proto.out}/yagish_data/v1/users.proto` です。`buf.yaml` の module `path` は `proto.out` と同じにしてください。
+配置は buf STANDARD（`PACKAGE_DIRECTORY_MATCH` / `PACKAGE_VERSION_SUFFIX`）に合わせます。`package yagish_data.v1` ならファイルは `{module}/yagish_data/v1/users.proto` です。
+
+`buf.yaml` は設定ファイルのディレクトリから上位へ探し、見つかった最寄りの v2 を使います。module path はその `buf.yaml` の所在ディレクトリ基準です。`modules` が省略されていれば `.`（`buf.yaml` と同じディレクトリ）です。複数 module があるときは `proto.module` または `--module` で `modules[].path` を指定します。見つからない / 曖昧な値は候補を出して失敗します。v1 や構文不正の `buf.yaml` もエラーです。`buf.yaml` 自体が無いときだけ `proto.out` / `--out` にフォールバックします。
 
 `proto.schemas` の例（`public` → `yagish_data.v1`）:
 
 - `package yagish_data.v1;`
-- `{proto.out}/yagish_data/v1/users.proto`
+- `{module}/yagish_data/v1/users.proto`
 - lock キーは `public.users` のまま
 
 omit した列の番号は lock の `reserved` に残る。omit と extra を同時にしても未宣言リネームにはしない。
@@ -191,7 +199,7 @@ omit した列の番号は lock の `reserved` に残る。omit と extra を同
 ## 注意
 
 - 対象は `relkind` が table / view / matview のものと、対象スキーマ内の ENUM です。`tables.exclude` / `--exclude` は両方に効きます。外部テーブル（FDW）とパーティション親・子は出しません。
-- 生成物は buf STANDARD を前提にします（package 末尾のバージョン、ディレクトリ一致、enum の `_UNSPECIFIED = 0`）。`import "buf/validate/validate.proto"` は出しますが、`buf.yaml` の deps は自分で用意してください。このツールは `buf generate` を呼びません。
+- 生成物は buf STANDARD を前提にします（package 末尾のバージョン、ディレクトリ一致、enum の `_UNSPECIFIED = 0`）。出力先は `buf.yaml` v2 の module path を読みますが、`buf.yaml` の生成も `buf generate` の実行もしません。`import "buf/validate/validate.proto"` は出しますが、`deps` は自分で用意してください。
 - 未知の PostgreSQL 型と composite は、既定で `google.protobuf.Any` になります。写像漏れをエラーにしたいときは `--strict-types` または `options.strict_types: true` を使います。
 
 ## テスト / lint

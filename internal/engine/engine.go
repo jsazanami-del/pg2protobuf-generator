@@ -24,6 +24,8 @@ type Options struct {
 	Schemas        []string
 	Out            string
 	OutSet         bool
+	Module         string
+	ModuleSet      bool
 	Config         string
 	LockFile       string
 	DryRun         bool
@@ -70,6 +72,10 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	if err := cfg.ValidateProto(); err != nil {
 		return nil, err
 	}
+	out, err := resolveOut(opt, cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	snap := opt.Snapshot
 	var conn *pgx.Conn
@@ -114,23 +120,41 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Files: files, Lock: assigned.Lock, Breaking: assigned.Breaking, Out: resolveOut(opt, cfg)}, nil
+	return &Result{Files: files, Lock: assigned.Lock, Breaking: assigned.Breaking, Out: out}, nil
 }
 
-func resolveOut(opt Options, cfg *config.Config) string {
+func resolveOut(opt Options, cfg *config.Config) (string, error) {
+	want := ""
+	if cfg != nil {
+		want = cfg.Proto.Module
+	}
+	if opt.ModuleSet {
+		want = opt.Module
+	}
+	startDir := "."
+	if opt.Config != "" {
+		startDir = filepath.Dir(opt.Config)
+	}
+	resolved, ok, err := config.ResolveBufModule(startDir, want)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return resolved, nil
+	}
 	if opt.OutSet {
 		if opt.Out != "" {
-			return opt.Out
+			return opt.Out, nil
 		}
-		return "./proto"
+		return "./proto", nil
 	}
 	if cfg != nil && cfg.Proto.Out != "" {
-		return cfg.Proto.Out
+		return cfg.Proto.Out, nil
 	}
 	if opt.Out != "" {
-		return opt.Out
+		return opt.Out, nil
 	}
-	return "./proto"
+	return "./proto", nil
 }
 
 func outputDir(opt Options, res *Result) string {
