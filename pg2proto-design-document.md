@@ -2,7 +2,7 @@
 
 PostgreSQL のシステムカタログから Protobuf (proto3) の **message / enum** を生成する CLI ツール `pg2proto` の仕様・設計です。
 
-型の識別は **pgx v5 の OID / `pgtype.Map`** を一次ソースにします。フィールド番号は `.pg2proto.lock` で固定します。`buf validate` アノテーションはデフォルトで付与しますが、**buf CLI・`buf.yaml`・`buf.gen.yaml` は生成・実行しません**。
+型の識別は **pgx v5 の OID / `pgtype.Map`** を一次ソースにします。フィールド番号は `.pg2proto.lock` で固定します。`buf validate` アノテーションはデフォルトで付与しますが、**buf CLI・`buf.yaml`・`buf.gen.yaml` は生成・実行しません**。出力先は利用者が管理する `buf.yaml` v2 の module path を読み取ります。
 
 ---
 
@@ -57,7 +57,8 @@ pg2proto [subcommand] [flags]
 | :--- | :--- | :--- | :--- |
 | `--conn` | `-c` | `$DATABASE_URL` | PostgreSQL 接続文字列（DSN） |
 | `--schema` | `-s` | `public` | 対象スキーマ（複数指定可） |
-| `--out` | `-o` | `./proto` | `.proto` の出力先ディレクトリ（yaml の `proto.out` より優先） |
+| `--out` | `-o` | `./proto` | `buf.yaml` が無いときの出力先（yaml の `proto.out` より優先） |
+| `--module` | | （なし） | `buf.yaml` の `modules[].path`（yaml の `proto.module` より優先） |
 | `--config` | | `.pg2proto.yaml` | 設定ファイル |
 | `--lock-file` | | `.pg2proto.lock` | lock ファイル |
 | `--dry-run` | | `false` | `.proto` も lock も書かない。preview を stdout へ |
@@ -70,7 +71,7 @@ pg2proto [subcommand] [flags]
 
 ### 2.4 `check` のフラグ
 
-`generate` と同じ `--conn` / `--schema` / `--config` / `--lock-file` を取る。DB に接続する。出力ファイルは書かない。
+`generate` と同じ `--conn` / `--schema` / `--config` / `--lock-file` / `--out` / `--module` を取る。DB に接続する。出力ファイルは書かない。
 
 fail 条件:
 
@@ -215,8 +216,8 @@ var id pgtype.Int4
 
 | 対象 | 規則 |
 | :--- | :--- |
-| ファイル（relation） | `{out}/{package}/{relation}.proto`（package の `.` を `/` にする。buf `PACKAGE_DIRECTORY_MATCH`） |
-| ファイル（ENUM） | `{out}/{package}/{enum_type}.proto` |
+| ファイル（relation） | `{module}/{package}/{relation}.proto`（package の `.` を `/` にする。buf `PACKAGE_DIRECTORY_MATCH`） |
+| ファイル（ENUM） | `{module}/{package}/{enum_type}.proto` |
 | package | `{package_prefix}` または `proto.schemas.<pg>`。末尾は `v1` など（buf `PACKAGE_VERSION_SUFFIX`）。テーブルごと package にしない |
 | `go_package` | `{go_package_prefix}/{package}`（prefix がすでに package パスで終わっていればそのまま） |
 | message 名 | テーブル / view 名を PascalCase。**自動単数化しない**（`users` → `Users`） |
@@ -226,7 +227,7 @@ var id pgtype.Int4
 
 識別子が proto 予約語または不正な場合は末尾 `_` を付け、lock に `proto_name` を記録する。enum ラベルの不正文字は `_` に置換する。
 
-配置は buf STANDARD に従う。`proto.out` は buf module root と一致させる。テーブル proto は同じ proto package の enum を `import` する。`proto.schemas` は PG スキーマを別 proto package に写す。lock と yaml のキー（`public.users` など）は PG 名のまま。
+配置は buf STANDARD に従う。出力ルートは最寄りの `buf.yaml` v2 の module path（`modules` 省略時は `.`）。`buf.yaml` が無いときだけ `proto.out` / `--out` にフォールバックする。複数 module なら `proto.module` または `--module` で `modules[].path` を選ぶ。テーブル proto は同じ proto package の enum を `import` する。`proto.schemas` は PG スキーマを別 proto package に写す。lock と yaml のキー（`public.users` など）は PG 名のまま。
 
 生成ファイル先頭:
 
@@ -343,7 +344,9 @@ override の制約:
 
 ### 4.3 buf との境界
 
-`pg2proto` は `.proto` と `.pg2proto.lock` と、`init` 時の `.pg2proto.yaml` だけを出す。
+`pg2proto` は `.proto` と `.pg2proto.lock` と、`init` 時の `.pg2proto.yaml` だけを出す。`buf.yaml` / `buf.gen.yaml` は生成しない。
+
+出力ディレクトリは、設定ファイルのディレクトリから上位へ辿った最寄りの `buf.yaml`（**v2 のみ**）を読む。module path はそのファイルの所在ディレクトリ基準で解決する。v1 や構文不正はエラー。`buf.yaml` が無いときだけ `proto.out` / `--out` にフォールバックする。
 
 `import "buf/validate/validate.proto"` を書くが、protovalidate のモジュール解決（`buf.yaml` の `deps` など）は利用者の作業である。ツールは `buf generate` を呼ばない。
 
@@ -357,7 +360,8 @@ version: "1"
 proto:
   package_prefix: "db.v1"
   go_package_prefix: "github.com/example/app/gen/proto"
-  out: "./proto"
+  module: proto            # buf.yaml の modules[].path。複数 module のとき必須
+  out: "./proto"           # buf.yaml が無いときだけ使う
   schemas:
     public: yagish_data.v1  # PG schema -> proto package。lock キーは public のまま
 
@@ -465,7 +469,7 @@ message UsersView {
 
 ### 6.2 利用者が自分で持つ buf 設定（本ツールは出さない）
 
-validate 付き proto をコンパイルするには、利用者が例えば次を用意する。これは例示であり、`generate` の成果物ではない。
+validate 付き proto をコンパイルするには、利用者が例えば次を用意する。これは例示であり、`generate` の成果物ではない。`pg2proto` はこの `buf.yaml` を読み、`modules[].path`（この例では `proto`）を出力ルートにする。
 
 ```yaml
 # buf.yaml（利用者が管理）

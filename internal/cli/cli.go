@@ -21,6 +21,7 @@ func NewRoot(ctx context.Context) *cobra.Command {
 		conn        string
 		schemas     []string
 		out         string
+		module      string
 		cfgPath     string
 		lockFile    string
 		dryRun      bool
@@ -59,7 +60,8 @@ func NewRoot(ctx context.Context) *cobra.Command {
 	bindGen := func(cmd *cobra.Command) {
 		cmd.Flags().StringVarP(&conn, "conn", "c", "", "PostgreSQL connection string (default $DATABASE_URL)")
 		cmd.Flags().StringSliceVarP(&schemas, "schema", "s", []string{"public"}, "target schema(s)")
-		cmd.Flags().StringVarP(&out, "out", "o", "./proto", "output directory for .proto files (overrides yaml proto.out)")
+		cmd.Flags().StringVarP(&out, "out", "o", "./proto", "output directory when buf.yaml is not found (overrides yaml proto.out)")
+		cmd.Flags().StringVar(&module, "module", "", "buf.yaml module path (overrides yaml proto.module)")
 		cmd.Flags().StringVar(&cfgPath, "config", ".pg2proto.yaml", "config file")
 		cmd.Flags().StringVar(&lockFile, "lock-file", ".pg2proto.lock", "lock file")
 		cmd.Flags().StringSliceVar(&exclude, "exclude", nil, "exclude glob for relations and enums (added to yaml exclude)")
@@ -75,6 +77,8 @@ func NewRoot(ctx context.Context) *cobra.Command {
 				Schemas:        schemas,
 				Out:            out,
 				OutSet:         cmd.Flags().Changed("out"),
+				Module:         module,
+				ModuleSet:      cmd.Flags().Changed("module"),
 				Config:         cfgPath,
 				LockFile:       lockFile,
 				DryRun:         dryRun,
@@ -122,6 +126,8 @@ func NewRoot(ctx context.Context) *cobra.Command {
 				Schemas:        schemas,
 				Out:            out,
 				OutSet:         cmd.Flags().Changed("out"),
+				Module:         module,
+				ModuleSet:      cmd.Flags().Changed("module"),
 				Config:         cfgPath,
 				LockFile:       lockFile,
 				Exclude:        exclude,

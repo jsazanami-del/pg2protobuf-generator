@@ -371,3 +371,189 @@ func TestCheckIncompatible(t *testing.T) {
 		t.Fatal("expected incompatible type change")
 	}
 }
+
+func TestBufYAMLSingleModuleOut(t *testing.T) {
+	dir := t.TempDir()
+	writeEngineBuf(t, dir, "version: v2\nmodules:\n  - path: proto\n")
+	yamlOut := filepath.Join(dir, "from-yaml")
+	flagOut := filepath.Join(dir, "from-flag")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	yaml := "version: \"1\"\nproto:\n  package_prefix: \"db.v1\"\n  go_package_prefix: \"github.com/example/app/gen/proto\"\n  out: " + strconv.Quote(yamlOut) + "\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      flagOut,
+		OutSet:   true,
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.Abs(filepath.Join(dir, "proto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != want {
+		t.Fatalf("buf module should win: got %q want %q", res.Out, want)
+	}
+	users := res.Files["db/v1/users.proto"]
+	if !strings.Contains(users, "package db.v1;") {
+		t.Fatalf("package:\n%s", users)
+	}
+	if !strings.Contains(users, `import "db/v1/order_status.proto"`) {
+		t.Fatalf("import:\n%s", users)
+	}
+	if err := engine.Write(opt, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "proto", "db", "v1", "users.proto")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBufYAMLModuleSelection(t *testing.T) {
+	dir := t.TempDir()
+	writeEngineBuf(t, dir, "version: v2\nmodules:\n  - path: proto\n  - path: proto/api\n")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  package_prefix: db.v1\n  module: proto\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantProto, err := filepath.Abs(filepath.Join(dir, "proto"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != wantProto {
+		t.Fatalf("yaml module: got %q want %q", res.Out, wantProto)
+	}
+
+	opt.Module = "proto/api"
+	opt.ModuleSet = true
+	res, err = engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.Abs(filepath.Join(dir, "proto", "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != want {
+		t.Fatalf("flag module should win: got %q want %q", res.Out, want)
+	}
+	if err := engine.Write(opt, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "proto", "api", "db", "v1", "users.proto")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBufYAMLMultipleModulesRequireSelection(t *testing.T) {
+	dir := t.TempDir()
+	writeEngineBuf(t, dir, "version: v2\nmodules:\n  - path: proto\n  - path: proto/api\n")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  package_prefix: db.v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := engine.Run(context.Background(), engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	})
+	if err == nil {
+		t.Fatal("expected module selection error")
+	}
+	if !strings.Contains(err.Error(), "multiple modules") {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestBufYAMLDotModuleWritesPackageDir(t *testing.T) {
+	dir := t.TempDir()
+	writeEngineBuf(t, dir, "version: v2\n")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  package_prefix: db.v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Write(opt, res); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "db", "v1", "users.proto")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNoBufYAMLFallsBackToOut(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "gen", "proto")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	yaml := "version: \"1\"\nproto:\n  package_prefix: \"db.v1\"\n  out: " + strconv.Quote(out) + "\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opt := engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Out:      filepath.Join(dir, "ignored"),
+		OutSet:   true,
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	}
+	res, err := engine.Run(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Out != opt.Out {
+		t.Fatalf("flag out should win without buf.yaml: %q", res.Out)
+	}
+}
+
+func TestBufYAMLUnsupportedVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeEngineBuf(t, dir, "version: v1\n")
+	cfgPath := filepath.Join(dir, ".pg2proto.yaml")
+	if err := os.WriteFile(cfgPath, []byte("proto:\n  package_prefix: db.v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := engine.Run(context.Background(), engine.Options{
+		Config:   cfgPath,
+		LockFile: filepath.Join(dir, ".pg2proto.lock"),
+		Snapshot: fixture(),
+		Schemas:  []string{"public"},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported buf.yaml version")
+	}
+}
+
+func writeEngineBuf(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "buf.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

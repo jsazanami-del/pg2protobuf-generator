@@ -31,6 +31,7 @@ type Proto struct {
 	PackagePrefix   string            `yaml:"package_prefix"`
 	GoPackagePrefix string            `yaml:"go_package_prefix"`
 	Out             string            `yaml:"out"`
+	Module          string            `yaml:"module"`
 	Schemas         map[string]string `yaml:"schemas"`
 }
 
@@ -161,7 +162,7 @@ func PackageDir(pkg string) string {
 	return strings.ReplaceAll(strings.Trim(pkg, "."), ".", "/")
 }
 
-// OutputFile is the path of a generated proto relative to proto.out.
+// OutputFile is the path of a generated proto relative to the buf module root.
 func (c *Config) OutputFile(pgSchema, name string) string {
 	dir := PackageDir(c.OutputPackage(pgSchema))
 	if dir == "" {
@@ -286,9 +287,10 @@ func InitTemplate() string {
 version: "1"
 
 proto:
-  package_prefix: "db.v1"  # package と {out}/{package}/ のパス。末尾は v1 など（buf lint）
+  package_prefix: "db.v1"  # package と {module}/{package}/ のパス。末尾は v1 など（buf lint）
   go_package_prefix: "github.com/example/app/gen/proto"
-  out: "./proto"  # buf module root。--out より低い
+  # module: proto  # buf.yaml の modules[].path。複数 module のとき必須（--module で上書き）
+  out: "./proto"  # buf.yaml が無いときだけ使う。--out より低い
   schemas: {}  # PG schema -> 別 proto package（例: public: yagish_data.v1）
 
 options:
